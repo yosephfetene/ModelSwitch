@@ -1,0 +1,78 @@
+# Security Requirements
+
+## Assets
+
+-   Provider credentials and client API keys
+-   Client prompts, completions, and metadata
+-   Usage records, cost estimates, and routing policy
+-   Operational logs and deployment configuration
+
+## Threats and controls
+
+  -----------------------------------------------------------------------
+  Threat                              Minimum control
+  ----------------------------------- -----------------------------------
+  Stolen client key                   High-entropy key, hashed storage,
+                                      revocation, redaction
+
+  Provider secret leak                Secret manager/environment
+                                      injection; never commit or log
+
+  Cost abuse                          Per-key limits, request caps,
+                                      budgets, bounded retries
+
+  Resource exhaustion                 Body-size limits, concurrency
+                                      limits, deadlines, rate limits
+
+  SSRF/endpoint abuse                 Allowlist configured provider
+                                      endpoints; never accept arbitrary
+                                      client URLs
+
+  Prompt leakage                      No content logging by default;
+                                      explicit retention/access policy
+
+  Error leakage                       Stable sanitized errors; no raw
+                                      upstream body or stack trace
+
+  Unauthorized policy change          Authenticated operator actions and
+                                      audit records
+
+  Vulnerable dependency               CI dependency checks and documented
+                                      updates
+  -----------------------------------------------------------------------
+
+## Secret handling
+
+-   Keep `.env` out of source control.
+-   Commit `.env.example` with placeholders only.
+-   Use separate development and production credentials.
+-   Rotate/revoke exposed credentials.
+-   Test that logs, tracing spans, panic messages, and error paths do
+    not reveal secrets.
+-   Never accept provider credentials from normal client request fields.
+
+## Privacy
+
+Default to metadata, outcomes, timing, and usage rather than
+prompt/completion content. Any later content capture should be opt-in,
+access-controlled, time-limited, and documented.
+
+## Cost and abuse controls
+
+-   Cap request size and output limits.
+-   Bound concurrency and upstream deadlines.
+-   Bound and record every retry/fallback attempt.
+-   Apply per-key quotas and define budget consistency guarantees.
+-   Prevent clients from overriding privileged routing policy.
+
+## Release checklist
+
+-   [ ] No committed secrets; secret scanning enabled
+-   [ ] Client keys hashed and redacted
+-   [ ] Unauthorized calls rejected before upstream invocation
+-   [ ] Request-size and timeout limits configured
+-   [ ] Retries and fallback bounded
+-   [ ] Error responses sanitized
+-   [ ] Logs tested for secret/content leakage
+-   [ ] Dependencies/container image reviewed
+-   [ ] Retention and deletion policy documented
