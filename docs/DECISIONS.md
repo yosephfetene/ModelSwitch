@@ -255,6 +255,12 @@ branch is protected by CI; changes get an independent code review before merge;
 commits follow Conventional Commits; behavior is specified as tests
 before implementation; every change must be explainable by its author
 before merge. A `CLAUDE.md` file records project rules for AI sessions.
+
+Division of work: the AI writes most code directly in files and runs
+build, lint, and tests before handing over; the author reviews the diff,
+runs all git commands, and always performs the merge. Interview-critical
+pieces (the reliability executor, and possibly one adapter) are typed by
+the author from an agreed design and reviewed by the AI.
 The repository stays private until Stage 0 is complete.
 
 **Consequences:** Slower than unreviewed generation, but the history
