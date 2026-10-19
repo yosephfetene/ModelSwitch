@@ -20,7 +20,8 @@ intended system, not features already implemented.
 ## Proposed stack
 
 -   Backend: Rust, Axum, Tokio
--   Persistence: PostgreSQL, SQLx
+-   Persistence: PostgreSQL 18, SQLx
+-   Providers: OpenAI-compatible (Groq, Ollama) and Google Gemini
 -   Dashboard (later): React, TypeScript
 -   Delivery: Docker, GitHub Actions
 -   Testing: unit, integration, contract, failure-injection, and load
@@ -28,8 +29,8 @@ intended system, not features already implemented.
 
 ## First vertical slice
 
-1.  `POST /v1/generate`
-2.  Two provider adapters
+1.  `POST /v1/generate` with model aliases and `provider/model` pins
+2.  Two provider adapters: OpenAI-compatible and Gemini
 3.  One normalized non-streaming response
 4.  Authentication and request validation
 5.  Persist request outcomes and provider-reported usage
@@ -61,3 +62,7 @@ microservices. Build a small reliable slice first.
 4.  Separate reported usage from estimated cost.
 5.  Do not log secrets or prompt content by default.
 6.  Support reliability claims with automated tests.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).

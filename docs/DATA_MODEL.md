@@ -7,30 +7,53 @@ and indexes during implementation.
 
 -   `id` --- primary key / UUID
 -   `name` --- operator-assigned label
--   `key_hash` --- unique hash of secret
+-   `key_prefix` --- first characters of the key (for example
+    `ms_dev_7Hq2`), for display only
+-   `key_hash` --- unique SHA-256 hash of the full key
 -   `status` --- active, revoked, expired
 -   `created_at`, `expires_at`, `revoked_at`
--   `rate_limit_policy_id` --- optional reference
+-   `rate_limit_policy_id` --- optional reference (Stage 3)
 
+Keys are `ms_dev_` or `ms_live_` followed by 32 random bytes in base62.
 Generate keys securely, display a new key once, and never log its
-plaintext value.
+plaintext value. A fast hash is sufficient because keys are
+high-entropy (ADR-012).
 
 ## `request_records`
 
--   `id` --- gateway request ID
+-   `id` --- gateway request ID (time-sortable, `req_` prefix)
+-   `client_request_id` --- nullable, validated client correlation ID
 -   `client_api_key_id`
--   `requested_model`, `selected_provider`, `selected_model`
+-   `requested_model` --- alias or `provider/model` pin as sent
+-   `selected_provider`, `selected_model` --- what actually ran
 -   `routing_policy_version`, `routing_reason`
--   `status` --- succeeded, failed, timed out, rejected
+-   `status` --- succeeded, failed, timed_out, rejected
 -   `error_code` --- nullable
 -   `latency_ms`
--   `input_tokens`, `output_tokens`, `total_tokens` --- nullable
--   `usage_source` --- provider_reported, estimated, unavailable
--   `estimated_cost`, `pricing_version`
+-   `reported_input_tokens`, `reported_output_tokens`,
+    `reported_total_tokens` --- nullable provider facts
+-   `usage_source` --- provider_reported, unavailable
+-   `estimated_cost`, `pricing_version` --- nullable until pricing
+    exists (Stage 3)
 -   `created_at`, `completed_at`
 
 Do not store prompts/completions by default. If added later, define
 opt-in, access controls, retention, and deletion behavior.
+
+Missing usage stays null with `usage_source = unavailable`; it is never
+fabricated. Stage 3 adds separate `estimated_input_tokens`,
+`estimated_output_tokens`, and `estimate_method` columns used only for
+budget enforcement (ADR-010).
+
+### Accounting failures
+
+When generation succeeds but this record cannot be written, the failure
+cannot be recorded in the row itself. It is captured instead by a
+structured `accounting_write_failed` log entry with the request ID, the
+`accounting_failures_total` metric, and the
+`X-ModelSwitch-Accounting: failed` response header (ADR-009). If an
+optional background retry later writes the row, it is marked with
+`recorded_late = true`.
 
 ## `request_attempts`
 
@@ -49,6 +72,8 @@ This separates one logical request from individual provider attempts.
 -   `created_at`, `created_by`
 
 Policy changes should be auditable and validated before activation.
+Model aliases start in configuration files; whether they move into the
+database is decided with routing policy storage.
 
 ## `pricing_versions`
 
@@ -66,6 +91,7 @@ remain explainable.
 -   `request_records(client_api_key_id, created_at)`
 -   `request_records(status, created_at)`
 -   `request_attempts(request_id, attempt_number)`
+-   `client_api_keys(key_hash)` --- unique, used on every request
 
 Finalize indexes based on query patterns. Define retention and deletion
 for related records.
@@ -77,4 +103,4 @@ for related records.
 -   Use atomic database operations for cross-instance budgets and rate
     limits.
 -   A database failure after successful generation must not cause
-    duplicate generation.
+    duplicate generation (ADR-009).

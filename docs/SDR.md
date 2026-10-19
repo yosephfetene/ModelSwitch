@@ -26,38 +26,24 @@ all providers are identical.
 
 ## 3. Objectives and success criteria
 
-  -----------------------------------------------------------------------
-  Objective                           Evidence
-  ----------------------------------- -----------------------------------
-  Consistent API                      Contract tests validate request and
-                                      response schemas
-
-  Multi-provider support              Two adapters pass end-to-end tests
-
-  Bounded failure handling            Tests prove deadlines and retry
-                                      limits are enforced
-
-  Usage accounting                    Records distinguish reported usage
-                                      from estimates
-
-  Secure access                       Invalid keys rejected;
-                                      secrets/content not logged by
-                                      default
-
-  Explainable routing                 Decisions include policy version
-                                      and reason code
-
-  Maintainability                     Modules have clear responsibilities
-                                      and tests
-  -----------------------------------------------------------------------
+| Objective | Evidence |
+|---|---|
+| Consistent API | Contract tests validate request and response schemas |
+| Multi-provider support | Two adapters pass end-to-end tests |
+| Bounded failure handling | Tests prove deadlines and retry limits are enforced |
+| Usage accounting | Records distinguish reported usage from estimates |
+| Secure access | Invalid keys rejected; secrets/content not logged by default |
+| Explainable routing | Decisions include policy version and reason code |
+| Maintainability | Modules have clear responsibilities and tests |
 
 ## 4. Scope
 
-### Initial release
+### Initial release (`v0.1.0`, Stages 0--2)
 
--   Client API-key authentication
+-   Client API-key authentication (PostgreSQL-backed, CLI-managed)
 -   Non-streaming text generation
--   Two provider adapters
+-   Two provider adapters: OpenAI-compatible (Groq, Ollama) and Gemini
+-   Model aliases with fallback, and `provider/model` pins
 -   Explicit routing policy and eligible fallback
 -   Timeouts and bounded retries
 -   PostgreSQL request and attempt records
@@ -142,10 +128,10 @@ remain unknown, not fabricated.
 
 ## 8. Request lifecycle
 
-1.  Assign or validate a request ID.
+1.  Generate a request ID; validate and keep any client correlation ID.
 2.  Authenticate the client key.
 3.  Validate request fields, size, capabilities, and limits.
-4.  Resolve routing policy and eligible candidates.
+4.  Resolve the alias or pin, routing policy, and eligible candidates.
 5.  Record the selected provider and decision reason.
 6.  Call the provider under a deadline.
 7.  Retry or fall back only when policy allows.
@@ -153,9 +139,12 @@ remain unknown, not fabricated.
 9.  Persist final outcome, attempts, latency, usage, and cost estimate.
 10. Emit telemetry and return the response.
 
-Persistence failure requires a deliberate policy. A failed history write
-after successful generation must not accidentally cause a second
-generation.
+Persistence failure follows a split policy (ADR-009): refuse when
+refusing is free, deliver when the work is already paid for. If the
+database is unavailable before the provider call, reject the request. If
+the history write fails after a successful generation, return the
+response with an accounting-failure header, log, and metric, so the
+failure never causes a second generation.
 
 ## 9. Privacy and data handling
 
@@ -170,69 +159,54 @@ generation.
 
 ## 10. Failure model
 
-  -----------------------------------------------------------------------
-  Failure                             Expected behavior
-  ----------------------------------- -----------------------------------
-  Invalid client key                  Reject before provider call
-
-  Invalid request                     Stable 4xx error; no retry
-
-  Provider timeout                    Stop at deadline; fallback only if
-                                      eligible
-
-  Provider 429/5xx                    Bounded policy-based handling
-
-  Malformed provider response         Treat as upstream failure; do not
-                                      leak raw body
-
-  No eligible provider                Return clear routing error
-
-  Limit exceeded                      Reject before provider call where
-                                      possible
-
-  Database unavailable                Follow documented persistence
-                                      policy and emit telemetry
-  -----------------------------------------------------------------------
+| Failure | Expected behavior |
+|---|---|
+| Invalid client key | Reject before provider call |
+| Invalid request | Stable 4xx error; no retry |
+| Provider timeout | Stop at deadline; fallback only if eligible; usage stays unknown |
+| Provider 429/5xx | Bounded policy-based handling |
+| Malformed provider response | Treat as upstream failure; do not leak raw body |
+| No eligible provider | Return clear routing error |
+| Pinned target fails | Same-target retries per policy; never fall back to another target |
+| Limit exceeded | Reject before provider call where possible |
+| Database unavailable before provider call | Reject with `503`; no provider call |
+| Database unavailable after successful generation | Return response with accounting-failure header; log and metric |
 
 ## 11. Deployment
 
-For development, run the Rust service and PostgreSQL locally, preferably
-with Docker Compose. CI should run formatting, linting, tests, and build
+For development, run the Rust service against a local PostgreSQL 18
+server; Docker Compose is provided as an alternative (ADR-014). CI should run formatting, linting, tests, and build
 checks. Production requires secure secret injection, TLS termination,
 database backups, and safe health/readiness endpoints.
 
 ## 12. Risks and mitigations
 
-  -----------------------------------------------------------------------
-  Risk                                Mitigation
-  ----------------------------------- -----------------------------------
-  Provider APIs diverge               Versioned adapters and contract
-                                      tests
-
-  Fallback adds cost                  Explicit eligibility, attempt
-                                      records, per-request limits
-
-  Pricing becomes stale               Versioned price data with source
-                                      and retrieval timestamp
-
-  Logs expose sensitive data          Metadata-first logging and
-                                      redaction tests
-
-  Scope expands too quickly           Complete one vertical slice at a
-                                      time
-
-  Router optimizes the wrong metric   Define workload and objective;
-                                      publish trade-offs
-  -----------------------------------------------------------------------
+| Risk | Mitigation |
+|---|---|
+| Provider APIs diverge | Versioned adapters and contract tests |
+| Fallback adds cost | Explicit eligibility, attempt records, per-request limits |
+| Pricing becomes stale | Versioned price data with source and retrieval timestamp |
+| Logs expose sensitive data | Metadata-first logging and redaction tests |
+| Scope expands too quickly | Complete one vertical slice at a time |
+| Router optimizes the wrong metric | Define workload and objective; publish trade-offs |
+| Free-tier limits or terms change | Mock-based CI; verify limits and terms when building each adapter |
 
 ## 13. Open questions
 
--   Which two providers should be implemented first?
--   How will client keys be created and revoked?
--   Should accounting persistence fail closed or allow a response with
-    an accounting warning?
 -   What retention period is appropriate?
 -   Which authoritative pricing sources and update process will be used?
+-   Should idempotency keys be supported, and how, given that replaying
+    a result requires storing output (ADR-011)?
+-   What do `routing.policy` names mean alongside aliases?
+
+### Resolved
+
+-   First providers: OpenAI-compatible (Groq, Ollama) and Gemini
+    (ADR-008).
+-   Key creation and revocation: CLI subcommands, PostgreSQL storage,
+    SHA-256 hashes (ADR-012).
+-   Accounting failure: fail closed before the provider call, fail open
+    after a successful generation (ADR-009).
 
 ## 14. First milestone acceptance gate
 
