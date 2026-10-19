@@ -1,7 +1,7 @@
 # ModelSwitch --- Software Requirements Specification (SRS)
 
--   Version: 0.1
--   Status: Proposed
+-   Version: 0.2
+-   Status: Proposed (design decisions recorded in `DECISIONS.md`)
 -   **MUST** = required for this release; **SHOULD** = strongly
     recommended; **MAY** = optional.
 
@@ -32,6 +32,8 @@ metadata, and returns a normalized result.
 -   Provider APIs, model names, rate limits, and pricing can change and
     must be verified before release.
 -   Initial release supports non-streaming text generation.
+-   Initial providers use free tiers or run locally (Groq, Gemini,
+    Ollama); their limits and terms can change.
 -   External provider availability and output quality are outside the
     gateway's direct control.
 
@@ -59,8 +61,9 @@ each adapter.
 
 ### FR-04 --- Multi-provider support
 
-The first release MUST support at least two provider adapters.
-**Verification:** end-to-end tests exercise each adapter.
+The first release MUST support at least two provider adapters: an
+OpenAI-compatible adapter (used for Groq and Ollama) and a Gemini
+adapter. **Verification:** end-to-end tests exercise each adapter.
 
 ### FR-05 --- Capability compatibility
 
@@ -95,8 +98,13 @@ bodies. **Verification:** contract and redaction tests.
 ### FR-10 --- Request history
 
 The system MUST persist request outcome, provider/model, timing, and
-timestamps. **Verification:** integration tests inspect records after
-success and failure.
+timestamps. If the database is unavailable before the provider call, the
+request MUST be rejected without a provider call. If the record cannot
+be written after a successful generation, the response MUST still be
+returned with an accounting-failure header, log, and metric, and MUST
+NOT trigger another generation. **Verification:** integration tests
+inspect records after success and failure; failure-injection tests
+cover both database-outage cases.
 
 ### FR-11 --- Usage and cost
 
@@ -120,6 +128,22 @@ disclosing secrets.
 
 Operator changes to keys, providers, and routing policies SHOULD be
 auditable with actor and timestamp.
+
+### FR-15 --- Model selection
+
+The request `model` MUST accept an operator-defined alias or a
+`provider/model` pin. Aliases MAY fall back down their candidate list;
+pins MUST NOT fall back to another target. Responses MUST report the
+provider and resolved model that ran. **Verification:** routing tests
+cover alias fallback, `routing.fallback = false`, pins, and unknown
+aliases or pins.
+
+### FR-16 --- Request identification
+
+The gateway MUST generate a time-sortable request ID for every request
+and return it in `X-Request-Id`. An optional `X-Client-Request-Id` MUST
+be validated, stored, and echoed. **Verification:** tests cover ID
+presence on success and error, and rejection of invalid correlation IDs.
 
 ## 6. Non-functional requirements
 
@@ -151,8 +175,11 @@ auditable with actor and timestamp.
 -   `GET /health/ready` --- readiness of required dependencies.
 -   Responses MUST include a request ID. Errors MUST contain a stable
     `error.code`.
+-   See `API.md` for the full contract.
 
 ## 8. Release 0.1 acceptance criteria
+
+Release `v0.1.0` covers roadmap Stages 0--2 (ADR-013).
 
 1.  A valid request can reach either configured provider.
 2.  Invalid keys are rejected before provider invocation.
@@ -166,15 +193,15 @@ auditable with actor and timestamp.
 
 ## 9. Traceability
 
-  Requirement   Main area            Evidence
-  ------------- -------------------- -----------------------------------
-  FR-01         API validation       Validation tests
-  FR-02         Auth                 Auth integration tests
-  FR-03--05     Provider adapters    Adapter contract tests
-  FR-06         Router               Routing tests
-  FR-07--08     Reliability          Timeout/failure tests
-  FR-09         Error mapping        Response contract tests
-  FR-10--11     Accounting/storage   Database tests
-  FR-12         Limits               Rate-limit tests
-  FR-13         Health               Health endpoint tests
-  NFR-01--04    Cross-cutting        Security and observability checks
+| Requirement | Main area | Evidence |
+|---|---|---|
+| FR-01 | API validation | Validation tests |
+| FR-02 | Auth | Auth integration tests |
+| FR-03--05 | Provider adapters | Adapter contract tests |
+| FR-06, FR-15 | Router | Routing tests |
+| FR-07--08 | Reliability | Timeout/failure tests |
+| FR-09, FR-16 | Error mapping, request IDs | Response contract tests |
+| FR-10--11 | Accounting/storage | Database and failure-injection tests |
+| FR-12 | Limits | Rate-limit tests |
+| FR-13 | Health | Health endpoint tests |
+| NFR-01--04 | Cross-cutting | Security and observability checks |

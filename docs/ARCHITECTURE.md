@@ -8,7 +8,7 @@ Client
   -> Authentication and client policy
   -> Capability validation and routing
   -> Reliability executor (deadline / bounded retry / fallback)
-  -> Provider adapter A or B
+  -> Provider adapter (OpenAI-compatible or Gemini)
   -> External model provider
 
 Application service -> Accounting -> PostgreSQL
@@ -19,7 +19,7 @@ API and services -> Structured logs and metrics
 
 ``` text
 src/
-  main.rs
+  main.rs              # server and CLI entry point
   app.rs
   config.rs
   error.rs
@@ -30,6 +30,9 @@ src/
   auth/
     mod.rs
     api_key.rs
+  cli/
+    mod.rs
+    keys.rs            # modelswitch keys create|list|revoke
   domain/
     mod.rs
     request.rs
@@ -38,12 +41,13 @@ src/
     usage.rs
   routing/
     mod.rs
+    alias.rs           # alias and provider/model pin resolution
     policy.rs
     selector.rs
   providers/
     mod.rs
-    provider_a.rs
-    provider_b.rs
+    openai_compat.rs   # Groq, Ollama
+    gemini.rs
   reliability/
     mod.rs
     executor.rs
@@ -80,7 +84,16 @@ Do not force every provider into a fake universal feature set. Requests
 requiring unsupported features should fail clearly or route to a
 compatible provider.
 
+An *adapter* implements one wire format; a *provider* is a configured
+endpoint, credential, and model set that uses an adapter. The
+OpenAI-compatible adapter serves both Groq and Ollama (ADR-008).
+
 ## 5. Routing
+
+The request `model` is either an alias or a `provider/model` pin
+(ADR-007). An alias resolves to an ordered candidate list from
+configuration; a pin resolves to exactly one target and never falls
+back to another target.
 
 The initial router filters by availability and capabilities, applies
 client/operator policy, orders candidates deterministically, records the
@@ -99,6 +112,11 @@ latency under a cost ceiling.
 -   Never return raw provider error bodies to clients.
 -   Do not allow an accounting write failure to accidentally trigger
     duplicate generation.
+-   Fail closed before the provider call: if the database is needed for
+    authentication or limit checks and is unavailable, reject with
+    `503`. Fail open after a successful generation: return the response
+    with `X-ModelSwitch-Accounting: failed` and emit a log and metric
+    (ADR-009).
 
 ## 7. Concurrency and state
 

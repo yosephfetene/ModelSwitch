@@ -9,37 +9,32 @@
 
 ## Threats and controls
 
-  -----------------------------------------------------------------------
-  Threat                              Minimum control
-  ----------------------------------- -----------------------------------
-  Stolen client key                   High-entropy key, hashed storage,
-                                      revocation, redaction
+| Threat | Minimum control |
+|---|---|
+| Stolen client key | High-entropy key, hashed storage, revocation, redaction |
+| Provider secret leak | Secret manager/environment injection; never commit or log |
+| Cost abuse | Per-key limits, request caps, budgets, bounded retries |
+| Resource exhaustion | Body-size limits, concurrency limits, deadlines, rate limits |
+| SSRF/endpoint abuse | Allowlist configured provider endpoints; never accept arbitrary client URLs |
+| Prompt leakage | No content logging by default; explicit retention/access policy |
+| Log injection | Validate client-supplied values such as `X-Client-Request-Id` before logging |
+| Error leakage | Stable sanitized errors; no raw upstream body or stack trace |
+| Unauthorized policy change | Authenticated operator actions and audit records |
+| Vulnerable dependency | CI dependency checks and documented updates |
 
-  Provider secret leak                Secret manager/environment
-                                      injection; never commit or log
+## Client API keys
 
-  Cost abuse                          Per-key limits, request caps,
-                                      budgets, bounded retries
-
-  Resource exhaustion                 Body-size limits, concurrency
-                                      limits, deadlines, rate limits
-
-  SSRF/endpoint abuse                 Allowlist configured provider
-                                      endpoints; never accept arbitrary
-                                      client URLs
-
-  Prompt leakage                      No content logging by default;
-                                      explicit retention/access policy
-
-  Error leakage                       Stable sanitized errors; no raw
-                                      upstream body or stack trace
-
-  Unauthorized policy change          Authenticated operator actions and
-                                      audit records
-
-  Vulnerable dependency               CI dependency checks and documented
-                                      updates
-  -----------------------------------------------------------------------
+-   Format: `ms_dev_` or `ms_live_` followed by 32 random bytes from a
+    cryptographically secure generator, encoded in base62. The prefix
+    lets secret scanners recognize leaked keys.
+-   Storage: SHA-256 hash plus a short display prefix; never the full
+    key. A fast hash is appropriate because keys are high-entropy;
+    slow password hashes (Argon2, bcrypt) defend low-entropy human
+    secrets and would only add per-request latency (ADR-012).
+-   Lifecycle: created and revoked with `modelswitch keys` CLI
+    subcommands; shown once; revocation is checked on every request.
+-   Third-party provider data: free-tier providers may use submitted
+    prompts; send only test data to them.
 
 ## Secret handling
 

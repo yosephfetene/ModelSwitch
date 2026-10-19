@@ -11,8 +11,10 @@ Protected routes use a gateway API key:
 Authorization: Bearer ms_live_REDACTED
 ```
 
-This is a placeholder, not a real key. Generate real keys securely, show
-them once, store only hashes, and support revocation.
+This is a placeholder, not a real key. Keys use an environment prefix
+(`ms_dev_` or `ms_live_`) followed by 32 random bytes in base62. They are
+shown once on creation, stored only as SHA-256 hashes, and can be
+revoked (see ADR-012).
 
 ## `POST /v1/generate`
 
@@ -20,29 +22,59 @@ them once, store only hashes, and support revocation.
 
 ``` json
 {
-  "model": "configured-model-alias",
+  "model": "fast-cheap",
   "input": "Summarize the main trade-offs in this design.",
-  "routing": { "policy": "balanced" },
+  "routing": { "fallback": true },
   "max_output_tokens": 500,
   "metadata": { "feature": "design-review" }
 }
 ```
 
--   `model`: configured model alias or identifier; define exact
-    semantics in implementation.
+-   `model`: either an operator-defined **alias** or a
+    **`provider/model` pin** (see "Model selection" below).
 -   `input`: text input for the first release.
--   `routing.policy`: optional policy name; clients cannot override
-    privileged operator rules.
+-   `routing.fallback`: optional, default `true`. When `false`, an
+    alias uses only its first eligible candidate. Ignored for pins,
+    which never fall back.
+-   `routing.policy`: reserved; semantics are decided in Stage 1.
+    Clients cannot override privileged operator rules.
 -   `max_output_tokens`: optional validated output limit.
 -   `metadata`: optional bounded, non-sensitive metadata.
+
+### Model selection
+
+Operators define aliases in configuration as ordered candidate lists:
+
+``` toml
+[aliases.fast-cheap]
+requires = []
+candidates = [
+  "groq/llama-3.3-70b",
+  "gemini/gemini-flash",
+  "ollama/llama3.2",
+]
+```
+
+Model names above are illustrative; verify current provider model names
+when configuring.
+
+| `model` value | Meaning | Fallback |
+|---|---|---|
+| `fast-cheap` | Alias: any eligible candidate, in order | Down the candidate list, within policy limits |
+| `groq/llama-3.3-70b` | Pin: exactly this provider and model | Never to another target; same-target retries per policy |
+
+Candidates that lack a capability listed in `requires` are never
+selected. Unknown aliases and unknown or unconfigured pins are rejected
+with `422`.
 
 ### Example success
 
 ``` json
 {
   "id": "req_01JEXAMPLE",
-  "model": "configured-model-alias",
-  "provider": "provider-a",
+  "model": "fast-cheap",
+  "provider": "gemini",
+  "resolved_model": "gemini-flash",
   "output": "Generated response text.",
   "usage": {
     "input_tokens": 120,
@@ -54,12 +86,28 @@ them once, store only hashes, and support revocation.
 }
 ```
 
-If usage is unavailable, represent it as null or omit it according to
-the finalized schema. Do not invent exact token counts.
+-   `model` echoes what the client requested; `provider` and
+    `resolved_model` report what actually ran.
+-   If usage is unavailable, the token fields are `null` and `source`
+    is `"unavailable"`. Exact token counts are never invented
+    (ADR-010).
 
 ### Headers
 
--   `X-Request-Id`: gateway request identifier.
+Request:
+
+-   `Authorization: Bearer <key>` --- required.
+-   `X-Client-Request-Id` --- optional client correlation ID. Must be
+    at most 128 characters from `[A-Za-z0-9._:-]`; otherwise the
+    request is rejected with `400`. Stored, logged, and echoed.
+
+Response:
+
+-   `X-Request-Id` --- gateway-generated, time-sortable request ID
+    (`req_` prefix). Always present, including on errors.
+-   `X-Client-Request-Id` --- echoed when the client sent one.
+-   `X-ModelSwitch-Accounting: failed` --- present when generation
+    succeeded but the request record could not be written (ADR-009).
 -   `Content-Type: application/json`.
 
 ### Example error
@@ -76,16 +124,17 @@ the finalized schema. Do not invent exact token counts.
 
 ### Suggested status mapping
 
-  Condition                                         HTTP status
-  ----------------------------------------------- -------------
-  Invalid JSON or fields                                    400
-  Missing/invalid/revoked key                               401
-  Authenticated but not permitted                           403
-  Request limit or budget exceeded                          429
-  No eligible provider / unsupported capability             422
-  Upstream provider failure                                 502
-  Upstream timeout                                          504
-  Unexpected gateway failure                                500
+| Condition | HTTP status |
+|---|---:|
+| Invalid JSON, fields, or correlation ID | 400 |
+| Missing/invalid/revoked key | 401 |
+| Authenticated but not permitted | 403 |
+| Unknown alias/pin, no eligible provider, or unsupported capability | 422 |
+| Request limit or budget exceeded | 429 |
+| Unexpected gateway failure | 500 |
+| Upstream provider failure | 502 |
+| Dependency needed before the provider call is unavailable (for example the database) | 503 |
+| Upstream timeout | 504 |
 
 ## Health endpoints
 
@@ -102,3 +151,4 @@ the finalized schema. Do not invent exact token counts.
 -   Keep public errors stable even if provider-specific errors change.
 -   Streaming, tool calls, and structured output are excluded from the
     initial contract.
+-   Idempotency keys are not supported in Release 0.1 (ADR-011).
