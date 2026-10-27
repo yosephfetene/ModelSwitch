@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(foreach \\($c in 'cargo','rustc','rustup','docker','git','psql','wsl'\\) { $p = Get-Command $c -ErrorAction SilentlyContinue; if \\($p\\) { \"$c : found\" } else { \"$c : missing\" } }; try { cargo --version } catch {}; try { docker --version } catch {}; try { git --version } catch {}; try { wsl -l -v } catch {})"
+    ]
+  }
+}
