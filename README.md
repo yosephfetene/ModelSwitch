@@ -4,8 +4,8 @@
 applications one API for multiple LLM providers, with explicit routing,
 bounded failover, usage/cost accounting, and operational visibility.
 
-**Status:** Design-stage specification. These documents describe the
-intended system, not features already implemented.
+**Status:** Early development (roadmap Stage 0). Only the health
+endpoints exist so far; the documents describe the intended system.
 
 ## Goals
 
@@ -38,6 +38,49 @@ intended system, not features already implemented.
 
 Do not start with a dashboard, adaptive routing, streaming, or
 microservices. Build a small reliable slice first.
+
+## Development setup
+
+Prerequisites: Rust (stable) and PostgreSQL 18.
+
+1.  Create a database role and development database. In `psql` as a
+    superuser, choosing your own password:
+
+    ``` sql
+    CREATE ROLE modelswitch LOGIN CREATEDB PASSWORD 'choose-a-password';
+    CREATE DATABASE modelswitch_dev OWNER modelswitch;
+    ```
+
+    `CREATEDB` lets `#[sqlx::test]` create a throwaway database per test.
+
+    Use only letters and digits in the password (make it long instead).
+    `DATABASE_URL` is a URL, so characters such as `@ : / # % ?` would
+    otherwise need percent-encoding. If PostgreSQL listens on a
+    non-default port, pass `-p <port>` to `psql` and use that port in
+    `DATABASE_URL`.
+
+2.  Copy the example files and fill in the password:
+
+    ``` bash
+    cp .env.example .env
+    cp modelswitch.example.toml modelswitch.toml
+    ```
+
+3.  Run the checks and the server:
+
+    ``` bash
+    cargo fmt --check
+    cargo clippy --all-targets -- -D warnings
+    cargo test
+    cargo run -- serve
+    ```
+
+4.  In another terminal:
+
+    ``` bash
+    curl http://127.0.0.1:8080/health/live
+    curl http://127.0.0.1:8080/health/ready
+    ```
 
 ## Documentation
 
