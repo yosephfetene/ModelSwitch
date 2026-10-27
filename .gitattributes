@@ -1,0 +1,3 @@
+# Store text files with LF line endings in the repository and check them
+# out with LF on every platform, so Windows and CI see identical files.
+* text=auto eol=lf

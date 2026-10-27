@@ -1,0 +1,20 @@
+# ModelSwitch configuration. Copy to modelswitch.toml and adjust.
+# This file holds structure only. Secrets live in environment variables;
+# the file names which variable to read, never the value.
+
+[server]
+bind = "127.0.0.1:8080"
+
+[database]
+# Environment variable that holds the PostgreSQL connection URL.
+url_env = "DATABASE_URL"
+max_connections = 10
+
+[health]
+# How long /health/ready waits for the database (100-10000 ms).
+database_timeout_ms = 1000
+
+[log]
+# "pretty" for local development, "json" for CI and production.
+# The level comes from the RUST_LOG environment variable (default: info).
+format = "pretty"

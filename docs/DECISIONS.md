@@ -266,3 +266,98 @@ The repository stays private until Stage 0 is complete.
 **Consequences:** Slower than unreviewed generation, but the history
 shows small, reviewed, tested changes, and the workflow is reusable
 across projects.
+
+## ADR-017 --- Single crate: library plus thin binary
+
+**Status:** Accepted.
+
+**Context:** Integration tests in `tests/` can only import a library
+crate. A Cargo workspace would let the compiler enforce module
+boundaries, but the real boundaries are not known yet.
+
+**Decision:** One crate, `modelswitch`. `src/lib.rs` holds the
+application (`build_router`, state, modules); `src/main.rs` only parses
+the CLI, loads configuration, connects resources, and starts the server.
+Split modules into workspace crates only when a boundary has proven
+itself.
+
+**Consequences:** Integration tests build the real router in-process.
+Module boundaries rely on visibility and the dependency rules in
+`ARCHITECTURE.md` rather than the compiler.
+
+## ADR-018 --- Configuration: TOML structure, secrets from environment
+
+**Status:** Accepted.
+
+**Context:** Configuration mixes nested, non-secret structure (server,
+providers, aliases) with a few secrets (database URL, provider keys).
+
+**Decision:** A required TOML file (`modelswitch.toml`, path overridable
+with `--config` or `MODELSWITCH_CONFIG`) holds structure. Secrets come
+from environment variables that the file names (`url_env`,
+`api_key_env`), never values. `.env` is loaded in development only.
+Parsing uses `serde` and `toml` with unknown keys rejected; no
+configuration framework. Secrets are `secrecy::SecretString`. Startup
+validation collects every problem into one error and never prints
+secret values. Example files with placeholders are committed.
+
+**Consequences:** Secrets cannot be committed through the config file,
+and accidental debug logging prints `[REDACTED]`. A missing or invalid
+file stops startup with an actionable message.
+
+## ADR-019 --- Typed errors inside, sanitized at the edge
+
+**Status:** Accepted; the HTTP error type arrives with the first
+error-producing endpoint in Stage 1.
+
+**Context:** Internal code must branch on error kinds (retryable or
+not, which status code), while clients must only see stable, sanitized
+codes (FR-09).
+
+**Decision:** Library modules define typed errors with `thiserror`.
+`anyhow` is used only in `main.rs` and CLI commands. A single `ApiError`
+type implementing Axum's `IntoResponse` is the only place internal
+errors become HTTP responses, mapping to the codes in `API.md`; full
+detail goes to logs with the request ID. Error values never carry
+secrets or raw provider bodies.
+
+**Consequences:** Leaking internals requires bypassing one well-tested
+mapping. Every new error variant needs an explicit public mapping.
+
+## ADR-020 --- Structured logging with tracing
+
+**Status:** Accepted.
+
+**Context:** Logs must be filterable by request, provider, and error
+class, and must never contain secrets or prompt content (NFR-04).
+
+**Decision:** Use `tracing` and `tracing-subscriber`. Output is `pretty`
+by default and `json` when configured (Docker and CI). The level comes
+from `RUST_LOG`, defaulting to `info`. `tower-http`'s `TraceLayer` adds
+per-request spans without headers or bodies. Health requests log at
+`debug`. A test will assert that a known key and prompt never appear in
+captured logs once the generate endpoint exists. Metrics arrive in
+Stage 2.
+
+**Consequences:** Every log line inside a request span carries its
+context, and the span model extends to OpenTelemetry later.
+
+## ADR-021 --- Liveness checks nothing; readiness checks only the database
+
+**Status:** Accepted.
+
+**Context:** Platforms restart instances that fail liveness and stop
+routing to instances that fail readiness.
+
+**Decision:** `/health/live` checks no dependencies. `/health/ready`
+pings PostgreSQL (`SELECT 1`) under a configurable deadline (default
+1 s) and returns `503` when it fails or times out. Providers are not
+checked. Neither endpoint needs an API key, and failure details go to
+logs, not response bodies. Readiness reaches the database through a
+`DatabaseCheck` trait so tests can simulate outages, hangs, and
+recovery. The database pool connects lazily, so the service starts while
+the database is down and reports it through readiness.
+
+**Consequences:** A database outage does not trigger restart storms, a
+provider outage does not take the gateway out of rotation, and health
+polling costs no provider quota.

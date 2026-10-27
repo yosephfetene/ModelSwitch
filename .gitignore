@@ -1,0 +1,9 @@
+# Build output
+/target
+
+# Local secrets and configuration; commit the *.example files instead
+.env
+modelswitch.toml
+
+# Personal Claude Code settings
+.claude/settings.local.json

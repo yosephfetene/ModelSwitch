@@ -1,0 +1,13 @@
+//! ModelSwitch: a multi-provider LLM inference gateway.
+//!
+//! The library holds the whole application so integration tests in
+//! `tests/` can build it in-process; `main.rs` only wires it to the
+//! outside world (ADR-017).
+
+pub mod api;
+pub mod app;
+pub mod config;
+pub mod observability;
+pub mod storage;
+
+pub use app::{AppState, build_router};
