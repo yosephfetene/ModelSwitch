@@ -1,0 +1,41 @@
+# cargo-deny policy, run in CI on every pull request.
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+
+[advisories]
+# Fail on dependencies with known security vulnerabilities (RustSec
+# database) and on versions withdrawn by their authors.
+yanked = "deny"
+
+[licenses]
+# Permissive licenses only. Copyleft licenses (GPL, AGPL, ...) could
+# oblige us to publish our own source and would block a future
+# closed-source or commercial version (ADR-015). Anything not listed
+# fails CI and must be reviewed before being added here.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+# Our own crate is not published to crates.io.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+# Only crates.io; no unknown registries or git dependencies.
+unknown-registry = "deny"
+unknown-git = "deny"
