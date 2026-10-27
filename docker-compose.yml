@@ -1,0 +1,30 @@
+# Local stack: PostgreSQL 18 plus ModelSwitch.
+#   docker compose up --build
+# Credentials here are for local development only.
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: modelswitch
+      POSTGRES_PASSWORD: modelswitch
+      POSTGRES_DB: modelswitch_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+
+  modelswitch:
+    build: .
+    environment:
+      DATABASE_URL: postgres://modelswitch:modelswitch@postgres:5432/modelswitch_dev
+      RUST_LOG: info
+    ports:
+      - "8080:8080"
+    # No health condition needed: the gateway starts without the database
+    # and reports it through /health/ready until it is reachable (ADR-021).
+    depends_on:
+      - postgres
+
+volumes:
+  postgres-data:

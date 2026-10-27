@@ -1,0 +1,16 @@
+# Default configuration baked into the Docker image. Mount a different
+# file and set MODELSWITCH_CONFIG to override it.
+
+[server]
+# Listen on all interfaces inside the container.
+bind = "0.0.0.0:8080"
+
+[database]
+url_env = "DATABASE_URL"
+max_connections = 10
+
+[health]
+database_timeout_ms = 1000
+
+[log]
+format = "json"

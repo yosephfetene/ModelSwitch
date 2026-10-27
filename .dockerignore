@@ -1,0 +1,8 @@
+# Keep the build context small and free of local secrets.
+target
+.git
+.github
+.claude
+.env
+modelswitch.toml
+docs

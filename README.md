@@ -82,6 +82,22 @@ Prerequisites: Rust (stable) and PostgreSQL 18.
     curl http://127.0.0.1:8080/health/ready
     ```
 
+### With Docker (alternative)
+
+``` bash
+docker compose up --build
+```
+
+This starts PostgreSQL 18 and the gateway on port 8080 with
+development-only credentials.
+
+## Continuous integration
+
+Every pull request runs formatting, lint (warnings are errors), tests
+against PostgreSQL 18, a Docker image build, a secret scan (gitleaks),
+and a dependency audit (`cargo-deny`: known vulnerabilities and a
+permissive-license allowlist; see `deny.toml`).
+
 ## Documentation
 
 -   [`docs/SDR.md`](docs/SDR.md) --- Software Design Report
