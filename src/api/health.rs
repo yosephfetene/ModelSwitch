@@ -15,8 +15,6 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
-use tower_http::trace::{DefaultOnFailure, TraceLayer};
-use tracing::Level;
 
 use crate::app::AppState;
 
@@ -24,11 +22,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
-        // Requests and responses log at DEBUG without headers, so frequent
-        // platform polling does not flood INFO logs. Failures (503s) are
-        // also lowered to DEBUG: `ready` already logs one WARN with the
-        // reason, and the default ERROR would repeat on every poll.
-        .layer(TraceLayer::new_for_http().on_failure(DefaultOnFailure::new().level(Level::DEBUG)))
 }
 
 #[derive(Debug, Serialize)]
