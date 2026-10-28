@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::Router;
@@ -111,17 +111,29 @@ pub async fn get(app: &Router, path: &str) -> TestResponse {
 pub struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
 
 impl CapturedLogs {
-    /// Captures logs at `level` and above on the current thread until
-    /// the returned guard is dropped. `#[tokio::test]` runs the whole
-    /// test on one thread, so the request's logs land here.
-    pub fn start(level: tracing::Level) -> (Self, tracing::subscriber::DefaultGuard) {
-        let logs = Self::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(level)
-            .with_ansi(false)
-            .with_writer(logs.clone())
-            .finish();
-        (logs.clone(), tracing::subscriber::set_default(subscriber))
+    /// Installs one process-wide subscriber that captures every log line
+    /// at all levels, and returns its buffer. Call it first in every test
+    /// of a log-asserting test binary.
+    ///
+    /// Global, not per-thread (`set_default`), on purpose: `tracing`
+    /// caches per log statement whether anyone listens, process-wide. A
+    /// parallel test hitting the same statement on a thread without a
+    /// subscriber could cache "nobody listens" and silently empty the
+    /// capture. Tests share the buffer, so each one should only inspect
+    /// lines that carry its own request ID.
+    pub fn global() -> &'static Self {
+        static LOGS: OnceLock<CapturedLogs> = OnceLock::new();
+        LOGS.get_or_init(|| {
+            let logs = Self::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::TRACE)
+                .with_ansi(false)
+                .with_writer(logs.clone())
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("no other global subscriber in this test binary");
+            logs
+        })
     }
 
     pub fn text(&self) -> String {

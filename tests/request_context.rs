@@ -1,5 +1,6 @@
 //! Request IDs, client correlation IDs, and the error envelope
-//! (Stage 1 slice 1 spec, cases 1--12).
+//! (Stage 1 slice 1 spec, cases 1--10; log cases 11--12 are in
+//! `logging.rs`).
 
 mod common;
 
@@ -9,10 +10,9 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::get as get_route;
-use tracing::Level;
 use uuid::Uuid;
 
-use common::{CapturedLogs, DbMode, FakeDatabase, TestResponse, app, get, send};
+use common::{DbMode, FakeDatabase, TestResponse, app, get, send};
 use modelswitch::app::with_middleware;
 
 const CORRELATION_ID: &str = "order-42.retry_1:abc";
@@ -178,36 +178,4 @@ async fn panic_returns_500_and_server_survives() {
         assert!(!boom.body.contains(fragment), "body leaked {fragment:?}");
     }
     assert_eq!(after.status, StatusCode::OK);
-}
-
-// 11
-#[tokio::test]
-async fn logs_carry_request_and_correlation_ids() {
-    let (logs, _guard) = CapturedLogs::start(Level::INFO);
-    let app = app(FakeDatabase::new(DbMode::Down));
-
-    let response = send(&app, get_with_client_id("/health/ready", CORRELATION_ID)).await;
-
-    let logs = logs.text();
-    let warning = logs
-        .lines()
-        .find(|line| line.contains("readiness: database ping failed"))
-        .unwrap_or_else(|| panic!("readiness warning not logged:\n{logs}"));
-    assert!(warning.contains(request_id(&response)), "{warning}");
-    assert!(warning.contains(CORRELATION_ID), "{warning}");
-}
-
-// 12
-#[tokio::test]
-async fn invalid_correlation_id_is_not_logged() {
-    let (logs, _guard) = CapturedLogs::start(Level::TRACE);
-    let forged_log_line = "x INFO admin login succeeded user=root";
-
-    let response = send(&up(), get_with_client_id("/health/live", forged_log_line)).await;
-
-    let logs = logs.text();
-    assert_eq!(response.status, StatusCode::BAD_REQUEST);
-    assert!(logs.contains("rejected X-Client-Request-Id"), "{logs}");
-    assert!(logs.contains(request_id(&response)), "{logs}");
-    assert!(!logs.contains("admin login succeeded"), "{logs}");
 }
