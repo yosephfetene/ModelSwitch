@@ -97,15 +97,21 @@ with `422`.
 Request:
 
 -   `Authorization: Bearer <key>` --- required.
--   `X-Client-Request-Id` --- optional client correlation ID. Must be
-    at most 128 characters from `[A-Za-z0-9._:-]`; otherwise the
-    request is rejected with `400`. Stored, logged, and echoed.
+-   `X-Client-Request-Id` --- optional client correlation ID, accepted
+    on every route. Must be 1--128 characters from `[A-Za-z0-9._:-]`
+    and sent at most once; otherwise the request is rejected with `400`
+    `invalid_request`, and the rejected value is neither logged nor
+    echoed. When valid it is stored, logged, and echoed.
+-   `X-Request-Id` --- ignored if sent; the gateway always generates
+    its own (ADR-011).
 
 Response:
 
--   `X-Request-Id` --- gateway-generated, time-sortable request ID
-    (`req_` prefix). Always present, including on errors.
--   `X-Client-Request-Id` --- echoed when the client sent one.
+-   `X-Request-Id` --- gateway-generated request ID: `req_` followed by
+    a UUIDv7, so IDs sort by creation time. Present on every response
+    from every route, including errors; on errors it equals the body's
+    `request_id`.
+-   `X-Client-Request-Id` --- echoed when the client sent a valid one.
 -   `X-ModelSwitch-Accounting: failed` --- present when generation
     succeeded but the request record could not be written (ADR-009).
 -   `Content-Type: application/json`.
@@ -118,9 +124,14 @@ Response:
     "code": "upstream_timeout",
     "message": "The selected provider did not respond before the deadline."
   },
-  "request_id": "req_01JEXAMPLE"
+  "request_id": "req_019a2f4c-8e7b-7c3d-9f1a-2b3c4d5e6f70"
 }
 ```
+
+Every error, on every route, uses this shape. Clients branch on
+`error.code`, which is stable; `error.message` is for humans and may
+change. Codes implemented so far: `invalid_request` (400), `not_found`
+(404), `method_not_allowed` (405), `internal_error` (500).
 
 ### Suggested status mapping
 
@@ -129,6 +140,8 @@ Response:
 | Invalid JSON, fields, or correlation ID | 400 |
 | Missing/invalid/revoked key | 401 |
 | Authenticated but not permitted | 403 |
+| Unknown route | 404 |
+| Route exists but not for this HTTP method | 405 |
 | Unknown alias/pin, no eligible provider, or unsupported capability | 422 |
 | Request limit or budget exceeded | 429 |
 | Unexpected gateway failure | 500 |

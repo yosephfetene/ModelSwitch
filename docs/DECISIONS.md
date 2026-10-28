@@ -163,8 +163,10 @@ Client-chosen IDs can collide or carry junk. Idempotency keys would
 prevent duplicate generation on client retries, but replaying a result
 requires storing model output, which conflicts with ADR-005.
 
-**Decision:** The gateway always generates a time-sortable request ID
-(UUIDv7 or ULID, `req_` prefix). Clients may send an optional
+**Decision:** The gateway always generates a time-sortable request ID:
+`req_` followed by a UUIDv7 (chosen over ULID in Stage 1 because
+PostgreSQL 18 generates and stores UUIDv7 natively as `uuid`). A
+client-sent `X-Request-Id` is ignored. Clients may send an optional
 `X-Client-Request-Id` correlation ID, which is validated (length and
 character set), stored, logged, and echoed. Idempotency keys are not
 supported in Release 0.1.
@@ -307,8 +309,9 @@ file stops startup with an actionable message.
 
 ## ADR-019 --- Typed errors inside, sanitized at the edge
 
-**Status:** Accepted; the HTTP error type arrives with the first
-error-producing endpoint in Stage 1.
+**Status:** Accepted; `ApiError` implemented in Stage 1. Request
+middleware completes its JSON body with the request ID, so 404, 405,
+invalid headers, and recovered panics share one shape.
 
 **Context:** Internal code must branch on error kinds (retryable or
 not, which status code), while clients must only see stable, sanitized
@@ -333,9 +336,11 @@ class, and must never contain secrets or prompt content (NFR-04).
 
 **Decision:** Use `tracing` and `tracing-subscriber`. Output is `pretty`
 by default and `json` when configured (Docker and CI). The level comes
-from `RUST_LOG`, defaulting to `info`. `tower-http`'s `TraceLayer` adds
-per-request spans without headers or bodies. Health requests log at
-`debug`. A test will assert that a known key and prompt never appear in
+from `RUST_LOG`, defaulting to `info`. Every request runs in a
+`request` span carrying `request_id` and, when valid,
+`client_request_id`; `tower-http`'s `TraceLayer` adds request and
+response events at `debug`, without headers or bodies. Errors are
+logged once, at the level chosen by the code that knows the cause. A test will assert that a known key and prompt never appear in
 captured logs once the generate endpoint exists. Metrics arrive in
 Stage 2.
 
