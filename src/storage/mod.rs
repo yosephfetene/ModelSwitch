@@ -1,3 +1,5 @@
+pub mod api_keys;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -46,6 +48,10 @@ impl DatabaseCheck for PgDatabaseCheck {
         })
     }
 }
+
+/// The SQL files in `migrations/`, embedded in the binary at compile time
+/// so a deployed binary always carries the schema it expects.
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 /// Creates the pool without connecting. The service starts even when the
 /// database is down and reports that through readiness instead of

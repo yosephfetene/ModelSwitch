@@ -82,6 +82,19 @@ Prerequisites: Rust (stable) and PostgreSQL 18.
     curl http://127.0.0.1:8080/health/ready
     ```
 
+5.  Create the database tables, then an API key:
+
+    ``` bash
+    cargo run -- migrate
+    cargo run -- keys create --name laptop
+    cargo run -- keys list
+    cargo run -- keys revoke <ID>
+    ```
+
+    The key is printed once; only its SHA-256 hash is stored. The
+    server never migrates on its own (ADR-022), so run `migrate` after
+    pulling changes that add a migration.
+
 ### With Docker (alternative)
 
 ``` bash
@@ -89,7 +102,11 @@ docker compose up --build
 ```
 
 This starts PostgreSQL 18 and the gateway on port 8080 with
-development-only credentials.
+development-only credentials. Create the tables with:
+
+``` bash
+docker compose run --rm modelswitch migrate
+```
 
 ## Continuous integration
 
