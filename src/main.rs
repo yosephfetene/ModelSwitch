@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
+use uuid::Uuid;
 
 use modelswitch::config::Config;
 use modelswitch::storage::{self, PgDatabaseCheck};
-use modelswitch::{AppState, build_router, observability};
+use modelswitch::{AppState, build_router, cli, observability};
 
 #[derive(Parser)]
 #[command(version, about = "Multi-provider LLM inference gateway")]
@@ -28,7 +30,32 @@ struct Cli {
 enum Command {
     /// Run the HTTP server.
     Serve,
+    /// Apply pending database migrations.
+    Migrate,
+    /// Manage client API keys.
+    #[command(subcommand)]
+    Keys(KeysCommand),
 }
+
+#[derive(Subcommand)]
+enum KeysCommand {
+    /// Create a key and print it once.
+    Create {
+        /// Label for the key, such as the client or machine using it.
+        #[arg(long)]
+        name: String,
+    },
+    /// List keys (prefixes only, never full keys).
+    List,
+    /// Revoke a key immediately.
+    Revoke {
+        /// The key's ID, as shown by `keys list`.
+        id: Uuid,
+    },
+}
+
+/// Upper bound for one operator command, including database waits.
+const COMMAND_DEADLINE: Duration = Duration::from_secs(30);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -41,6 +68,34 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Serve => serve(config).await,
+        Command::Migrate => with_deadline(migrate(config)).await,
+        Command::Keys(command) => with_deadline(keys(config, command)).await,
+    }
+}
+
+async fn with_deadline(command: impl Future<Output = anyhow::Result<()>>) -> anyhow::Result<()> {
+    tokio::time::timeout(COMMAND_DEADLINE, command)
+        .await
+        .with_context(|| format!("command did not finish within {COMMAND_DEADLINE:?}"))?
+}
+
+async fn migrate(config: Config) -> anyhow::Result<()> {
+    let pool = storage::connect_lazy(&config.database).context("invalid database configuration")?;
+    storage::MIGRATOR
+        .run(&pool)
+        .await
+        .context("failed to apply migrations")?;
+    tracing::info!("migrations applied");
+    Ok(())
+}
+
+async fn keys(config: Config, command: KeysCommand) -> anyhow::Result<()> {
+    let pool = storage::connect_lazy(&config.database).context("invalid database configuration")?;
+    let mut out = std::io::stdout().lock();
+    match command {
+        KeysCommand::Create { name } => cli::keys::create(&pool, &name, &mut out).await,
+        KeysCommand::List => cli::keys::list(&pool, &mut out).await,
+        KeysCommand::Revoke { id } => cli::keys::revoke(&pool, id, &mut out).await,
     }
 }
 

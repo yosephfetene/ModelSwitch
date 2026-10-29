@@ -366,3 +366,23 @@ the database is down and reports it through readiness.
 **Consequences:** A database outage does not trigger restart storms, a
 provider outage does not take the gateway out of rotation, and health
 polling costs no provider quota.
+
+## ADR-022 --- Embedded migrations, applied by an explicit command
+
+**Status:** Accepted.
+
+**Context:** The schema must match the binary that uses it, and schema
+changes must be deliberate. The server also starts while the database
+is down (ADR-021), so it cannot depend on migrating at startup.
+
+**Decision:** SQL migrations live in `migrations/` and are embedded in
+the binary at compile time with `sqlx::migrate!`. They are applied only
+by `modelswitch migrate`; `serve` never migrates. Tests get a fresh,
+migrated database per test from `#[sqlx::test]`. Key status is derived
+from `revoked_at` rather than stored in a separate column.
+
+**Consequences:** A deployed binary always carries the schema it
+expects, and several instances starting at once never race to migrate.
+Operators must run `migrate` before starting a new version that adds a
+migration. Deriving status gives one source of truth: a key cannot be
+"active" with a revocation time.

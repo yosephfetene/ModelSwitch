@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Build dependencies first so they are cached until Cargo.toml or
 # Cargo.lock change, not on every source edit.
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 RUN mkdir src \
     && echo 'fn main() {}' > src/main.rs \
     && touch src/lib.rs \
@@ -12,6 +12,8 @@ RUN mkdir src \
     && rm -rf src
 
 COPY src ./src
+# Embedded into the binary by `sqlx::migrate!`.
+COPY migrations ./migrations
 # Make sure cargo rebuilds the real sources rather than the stubs.
 RUN touch src/main.rs src/lib.rs && cargo build --release --locked
 
