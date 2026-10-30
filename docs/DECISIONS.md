@@ -386,3 +386,27 @@ expects, and several instances starting at once never race to migrate.
 Operators must run `migrate` before starting a new version that adds a
 migration. Deriving status gives one source of truth: a key cannot be
 "active" with a revocation time.
+
+## ADR-023 --- Uniform 401 for bad keys; fail closed on lookup failure
+
+**Status:** Accepted.
+
+**Context:** Authentication can fail because a key is missing,
+malformed, unknown, or revoked, or because the key store cannot be
+reached. Each answer tells the client something and triggers different
+client behavior.
+
+**Decision:** Missing, malformed, unknown, and revoked keys all receive
+the same `401 unauthorized` with `WWW-Authenticate: Bearer`; the reason
+is logged (with the key ID when known), never returned. Keys that do not
+have the exact key shape are rejected before any database query. If the
+lookup fails or exceeds `auth.database_timeout_ms`, the request is
+refused with `503 service_unavailable`: the gateway fails closed and
+never serves a request it could not authenticate. Authentication is a
+route layer on `/v1/*`, so unknown paths still return 404.
+
+**Consequences:** An attacker holding an old key cannot learn whether it
+was ever valid. Clients receive an actionable code: 401 means fix the
+key, 503 means retry later. Junk credentials cannot load PostgreSQL. A
+database outage stops all `/v1` traffic, which is the intended trade
+for never serving unauthenticated requests.

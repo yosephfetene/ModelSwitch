@@ -20,6 +20,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub health: HealthConfig,
+    pub auth: AuthConfig,
     pub log: LogConfig,
 }
 
@@ -38,6 +39,12 @@ pub struct DatabaseConfig {
 
 #[derive(Debug)]
 pub struct HealthConfig {
+    pub database_timeout: Duration,
+}
+
+#[derive(Debug)]
+pub struct AuthConfig {
+    /// Upper bound on the API key lookup for each request.
     pub database_timeout: Duration,
 }
 
@@ -61,6 +68,8 @@ pub struct FileConfig {
     pub database: FileDatabase,
     #[serde(default)]
     pub health: FileHealth,
+    #[serde(default)]
+    pub auth: FileAuth,
     #[serde(default)]
     pub log: FileLog,
 }
@@ -88,6 +97,21 @@ pub struct FileHealth {
 }
 
 impl Default for FileHealth {
+    fn default() -> Self {
+        Self {
+            database_timeout_ms: default_database_timeout_ms(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileAuth {
+    #[serde(default = "default_database_timeout_ms")]
+    pub database_timeout_ms: u64,
+}
+
+impl Default for FileAuth {
     fn default() -> Self {
         Self {
             database_timeout_ms: default_database_timeout_ms(),
@@ -223,6 +247,14 @@ impl Config {
             ));
         }
 
+        if !DATABASE_TIMEOUT_MS_RANGE.contains(&file.auth.database_timeout_ms) {
+            problems.push(format!(
+                "auth.database_timeout_ms: must be between {} and {}",
+                DATABASE_TIMEOUT_MS_RANGE.start(),
+                DATABASE_TIMEOUT_MS_RANGE.end()
+            ));
+        }
+
         match url {
             Some(url) if problems.is_empty() => Ok(Self {
                 server: ServerConfig {
@@ -234,6 +266,9 @@ impl Config {
                 },
                 health: HealthConfig {
                     database_timeout: Duration::from_millis(file.health.database_timeout_ms),
+                },
+                auth: AuthConfig {
+                    database_timeout: Duration::from_millis(file.auth.database_timeout_ms),
                 },
                 log: LogConfig {
                     format: file.log.format,
@@ -273,6 +308,7 @@ mod tests {
         assert_eq!(config.server.bind, "127.0.0.1:8080".parse().unwrap());
         assert_eq!(config.database.max_connections, 10);
         assert_eq!(config.health.database_timeout, Duration::from_millis(1_000));
+        assert_eq!(config.auth.database_timeout, Duration::from_millis(1_000));
         assert_eq!(config.log.format, LogFormat::Pretty);
     }
 

@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use uuid::Uuid;
 
 use modelswitch::config::Config;
+use modelswitch::storage::api_keys::PgKeyStore;
 use modelswitch::storage::{self, PgDatabaseCheck};
 use modelswitch::{AppState, build_router, cli, observability};
 
@@ -103,8 +104,10 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     let pool = storage::connect_lazy(&config.database).context("invalid database configuration")?;
 
     let state = AppState {
-        db: Arc::new(PgDatabaseCheck::new(pool)),
+        db: Arc::new(PgDatabaseCheck::new(pool.clone())),
         db_check_timeout: config.health.database_timeout,
+        keys: Arc::new(PgKeyStore::new(pool)),
+        auth_timeout: config.auth.database_timeout,
     };
 
     let listener = tokio::net::TcpListener::bind(config.server.bind)

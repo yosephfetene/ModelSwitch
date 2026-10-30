@@ -5,7 +5,8 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::api_key::{KeyName, KeyStatus, NewApiKey};
+use crate::auth::api_key::{KeyHash, KeyName, KeyStatus, NewApiKey};
+use crate::storage::BoxFuture;
 
 /// A stored key as shown to operators. Deliberately has no hash field:
 /// listings have no reason to read it.
@@ -82,4 +83,55 @@ pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<RevokeOutcome, sqlx::Erro
         Some(record) => RevokeOutcome::AlreadyRevoked(record),
         None => RevokeOutcome::NotFound,
     })
+}
+
+/// What authentication needs to know about a presented key's hash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyLookup {
+    pub id: Uuid,
+    pub revoked: bool,
+}
+
+/// Why a key lookup failed. For logs only, never for responses.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct KeyStoreError(pub String);
+
+/// The test seam between authentication and the database, so tests can
+/// simulate a database that is down or hanging.
+pub trait KeyStore: Send + Sync {
+    fn find_by_hash(
+        &self,
+        hash: KeyHash,
+    ) -> BoxFuture<'_, Result<Option<KeyLookup>, KeyStoreError>>;
+}
+
+/// `KeyStore` backed by PostgreSQL. One indexed lookup per request (the
+/// `key_hash` UNIQUE constraint), so revocation applies immediately.
+pub struct PgKeyStore {
+    pool: PgPool,
+}
+
+impl PgKeyStore {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+impl KeyStore for PgKeyStore {
+    fn find_by_hash(
+        &self,
+        hash: KeyHash,
+    ) -> BoxFuture<'_, Result<Option<KeyLookup>, KeyStoreError>> {
+        Box::pin(async move {
+            sqlx::query_as::<_, (Uuid, bool)>(
+                "SELECT id, revoked_at IS NOT NULL FROM client_api_keys WHERE key_hash = $1",
+            )
+            .bind(hash.as_bytes().as_slice())
+            .fetch_optional(&self.pool)
+            .await
+            .map(|row| row.map(|(id, revoked)| KeyLookup { id, revoked }))
+            .map_err(|error| KeyStoreError(error.to_string()))
+        })
+    }
 }

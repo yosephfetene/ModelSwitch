@@ -10,14 +10,17 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use modelswitch::storage::PgDatabaseCheck;
+use modelswitch::storage::api_keys::PgKeyStore;
 use modelswitch::{AppState, build_router};
 
 // 3
 #[sqlx::test]
 async fn ready_returns_ok_when_database_reachable(pool: PgPool) {
     let app = build_router(AppState {
-        db: Arc::new(PgDatabaseCheck::new(pool)),
+        db: Arc::new(PgDatabaseCheck::new(pool.clone())),
         db_check_timeout: Duration::from_secs(1),
+        keys: Arc::new(PgKeyStore::new(pool)),
+        auth_timeout: Duration::from_secs(1),
     });
 
     let response = app

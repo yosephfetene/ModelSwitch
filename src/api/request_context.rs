@@ -8,8 +8,9 @@
 //!    gateway controls.
 //! 2. Validates `X-Client-Request-Id`. Missing is fine; an invalid value
 //!    is rejected with 400 and is never logged or echoed (log injection).
-//! 3. Runs the request inside a `request` span carrying both IDs, so
-//!    every log line it produces can be found by ID.
+//! 3. Runs the request inside a `request` span carrying both IDs (and,
+//!    once authenticated, the key ID), so every log line it produces can
+//!    be found by ID.
 //! 4. Sets `X-Request-Id` (and echoes a valid correlation ID) on every
 //!    response, and completes `ApiError` bodies with the same request ID.
 
@@ -107,12 +108,19 @@ pub enum ClientRequestIdError {
     Repeated,
 }
 
+/// The request's span, so later middleware can record fields on it (such
+/// as `key_id` after authentication). `Span::current()` would not do:
+/// inner layers such as `TraceLayer` open spans of their own.
+#[derive(Debug, Clone)]
+pub struct RequestSpan(pub tracing::Span);
+
 pub async fn request_context(mut request: Request, next: Next) -> Response {
     let request_id = RequestId::generate();
     let span = tracing::info_span!(
         "request",
         request_id = %request_id,
         client_request_id = tracing::field::Empty,
+        key_id = tracing::field::Empty,
     );
 
     let client_request_id = ClientRequestId::from_headers(request.headers());
@@ -123,6 +131,7 @@ pub async fn request_context(mut request: Request, next: Next) -> Response {
                 request.extensions_mut().insert(id.clone());
             }
             request.extensions_mut().insert(request_id.clone());
+            request.extensions_mut().insert(RequestSpan(span.clone()));
             next.run(request).instrument(span).await
         }
         Err(reason) => {

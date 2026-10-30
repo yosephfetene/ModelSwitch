@@ -33,6 +33,10 @@
     secrets and would only add per-request latency (ADR-012).
 -   Lifecycle: created and revoked with `modelswitch keys` CLI
     subcommands; shown once; revocation is checked on every request.
+-   Verification: one uniform 401 for every bad key (the reason is only
+    logged), keys of the wrong shape rejected before any database
+    query, and fail closed with 503 when the key cannot be checked
+    (ADR-023). Neither the key nor the `Authorization` header is logged.
 -   Third-party provider data: free-tier providers may use submitted
     prompts; send only test data to them.
 

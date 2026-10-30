@@ -14,6 +14,11 @@ max_connections = 10
 # How long /health/ready waits for the database (100-10000 ms).
 database_timeout_ms = 1000
 
+[auth]
+# How long each request waits for its API key lookup (100-10000 ms).
+# Past this, the request is refused with 503, never let through.
+database_timeout_ms = 1000
+
 [log]
 # "pretty" for local development, "json" for CI and production.
 # The level comes from the RUST_LOG environment variable (default: info).
