@@ -21,6 +21,9 @@ use secrecy::ExposeSecret;
 use uuid::Uuid;
 
 use modelswitch::auth::api_key::{KeyHash, NewApiKey};
+use modelswitch::domain::{GenerateRequest, Generation, Provider, ProviderError, Usage};
+use modelswitch::providers::Registry;
+use modelswitch::routing::Catalog;
 use modelswitch::storage::api_keys::{KeyLookup, KeyStore, KeyStoreError};
 use modelswitch::storage::{BoxFuture, DatabaseCheck, PingError};
 use modelswitch::{AppState, build_router};
@@ -133,6 +136,63 @@ impl KeyStore for FakeKeyStore {
     }
 }
 
+/// What a `FakeProvider` does when called.
+#[derive(Clone)]
+pub enum ProviderMode {
+    Reply(Generation),
+    Fail(String),
+    Hang,
+}
+
+/// A provider whose behavior the test controls. Records every call as
+/// (model, request).
+#[derive(Clone)]
+pub struct FakeProvider {
+    mode: Arc<Mutex<ProviderMode>>,
+    calls: Arc<Mutex<Vec<(String, GenerateRequest)>>>,
+}
+
+impl FakeProvider {
+    pub fn new(mode: ProviderMode) -> Self {
+        Self {
+            mode: Arc::new(Mutex::new(mode)),
+            calls: Arc::default(),
+        }
+    }
+
+    pub fn replying(output: &str, usage: Usage) -> Self {
+        Self::new(ProviderMode::Reply(Generation {
+            output: output.to_owned(),
+            usage,
+        }))
+    }
+
+    pub fn calls(&self) -> Vec<(String, GenerateRequest)> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl Provider for FakeProvider {
+    fn generate<'a>(
+        &'a self,
+        model: &'a str,
+        request: &'a GenerateRequest,
+    ) -> BoxFuture<'a, Result<Generation, ProviderError>> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((model.to_owned(), request.clone()));
+        let mode = self.mode.lock().unwrap().clone();
+        Box::pin(async move {
+            match mode {
+                ProviderMode::Reply(generation) => Ok(generation),
+                ProviderMode::Fail(detail) => Err(ProviderError::Request(detail)),
+                ProviderMode::Hang => std::future::pending().await,
+            }
+        })
+    }
+}
+
 pub fn state(db: FakeDatabase) -> AppState {
     state_with_keys(db, FakeKeyStore::new(DbMode::Up))
 }
@@ -143,6 +203,8 @@ pub fn state_with_keys(db: FakeDatabase, keys: FakeKeyStore) -> AppState {
         db_check_timeout: DB_CHECK_TIMEOUT,
         keys: Arc::new(keys),
         auth_timeout: AUTH_TIMEOUT,
+        catalog: Arc::new(Catalog::default()),
+        providers: Arc::new(Registry::default()),
     }
 }
 

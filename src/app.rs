@@ -10,6 +10,8 @@ use tracing::Level;
 
 use crate::api;
 use crate::api::error::ApiError;
+use crate::providers::Registry;
+use crate::routing::Catalog;
 use crate::storage::DatabaseCheck;
 use crate::storage::api_keys::KeyStore;
 
@@ -25,11 +27,16 @@ pub struct AppState {
     pub keys: Arc<dyn KeyStore>,
     /// Upper bound on how long authentication waits for the key lookup.
     pub auth_timeout: Duration,
+    /// Configured aliases and models, for resolving a request's `model`.
+    pub catalog: Arc<Catalog>,
+    /// Configured providers, ready to call.
+    pub providers: Arc<Registry>,
 }
 
 /// Builds the complete HTTP application.
 pub fn build_router(state: AppState) -> Router {
-    with_middleware(Router::new().merge(api::health::router())).with_state(state)
+    let v1 = require_api_key(api::generate::router(), &state);
+    with_middleware(api::health::router().merge(v1)).with_state(state)
 }
 
 /// Requires a valid API key on every route in `routes` (the `/v1` API).

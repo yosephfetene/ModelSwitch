@@ -6,6 +6,7 @@
 //! into `Config` (meaning errors), collecting every problem so the
 //! operator can fix them all at once.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,9 @@ use std::time::Duration;
 
 use secrecy::SecretString;
 use serde::Deserialize;
+
+use crate::domain::Target;
+use crate::routing::Catalog;
 
 /// Validated configuration used by the running service.
 #[derive(Debug)]
@@ -22,6 +26,11 @@ pub struct Config {
     pub health: HealthConfig,
     pub auth: AuthConfig,
     pub log: LogConfig,
+    /// Configured providers by name.
+    pub providers: BTreeMap<String, ProviderConfig>,
+    /// Aliases by name, each an ordered, non-empty candidate list of
+    /// configured targets.
+    pub aliases: BTreeMap<String, Vec<Target>>,
 }
 
 #[derive(Debug)]
@@ -60,6 +69,23 @@ pub struct LogConfig {
     pub format: LogFormat,
 }
 
+/// Which wire format a provider speaks. More adapters arrive with their
+/// slices (OpenAI-compatible, Gemini).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdapterKind {
+    /// Built-in: returns the input unchanged; needs no credentials.
+    Echo,
+}
+
+#[derive(Debug)]
+pub struct ProviderConfig {
+    pub adapter: AdapterKind,
+    pub models: Vec<String>,
+    /// Deadline for one call to this provider.
+    pub timeout: Duration,
+}
+
 /// The file as written, before validation.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -72,6 +98,10 @@ pub struct FileConfig {
     pub auth: FileAuth,
     #[serde(default)]
     pub log: FileLog,
+    #[serde(default)]
+    pub providers: BTreeMap<String, FileProvider>,
+    #[serde(default)]
+    pub aliases: BTreeMap<String, FileAlias>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -134,6 +164,26 @@ impl Default for FileLog {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileProvider {
+    pub adapter: AdapterKind,
+    pub models: Vec<String>,
+    #[serde(default = "default_provider_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileAlias {
+    /// Ordered `provider/model` targets.
+    pub candidates: Vec<String>,
+}
+
+fn default_provider_timeout_ms() -> u64 {
+    30_000
+}
+
 fn default_max_connections() -> u32 {
     10
 }
@@ -148,6 +198,7 @@ fn default_log_format() -> LogFormat {
 
 const MAX_CONNECTIONS_RANGE: std::ops::RangeInclusive<u32> = 1..=100;
 const DATABASE_TIMEOUT_MS_RANGE: std::ops::RangeInclusive<u64> = 100..=10_000;
+const PROVIDER_TIMEOUT_MS_RANGE: std::ops::RangeInclusive<u64> = 1_000..=300_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -255,6 +306,9 @@ impl Config {
             ));
         }
 
+        let providers = validate_providers(&file.providers, &mut problems);
+        let aliases = validate_aliases(&file.aliases, &file.providers, &mut problems);
+
         match url {
             Some(url) if problems.is_empty() => Ok(Self {
                 server: ServerConfig {
@@ -273,10 +327,126 @@ impl Config {
                 log: LogConfig {
                     format: file.log.format,
                 },
+                providers,
+                aliases,
             }),
             _ => Err(ConfigError::Invalid(Problems(problems))),
         }
     }
+}
+
+impl Config {
+    /// The routing view of the configured providers and aliases.
+    pub fn catalog(&self) -> Catalog {
+        Catalog::new(
+            self.providers
+                .iter()
+                .map(|(name, provider)| (name.clone(), provider.models.clone())),
+            self.aliases.clone(),
+        )
+    }
+}
+
+/// Provider names appear in pins (`name/model`), logs, and responses, so
+/// they are kept to a plain identifier.
+fn is_valid_provider_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+fn validate_providers(
+    providers: &BTreeMap<String, FileProvider>,
+    problems: &mut Vec<String>,
+) -> BTreeMap<String, ProviderConfig> {
+    let mut valid = BTreeMap::new();
+    for (name, provider) in providers {
+        let before = problems.len();
+        if !is_valid_provider_name(name) {
+            problems.push(format!(
+                "providers.{name}: name must use only a-z, 0-9, - and _"
+            ));
+        }
+        if provider.models.is_empty() {
+            problems.push(format!(
+                "providers.{name}.models: must list at least one model"
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        for model in &provider.models {
+            if model.trim().is_empty() || model.trim() != model {
+                problems.push(format!(
+                    "providers.{name}.models: model names must be non-empty without surrounding spaces"
+                ));
+            } else if !seen.insert(model) {
+                problems.push(format!(
+                    "providers.{name}.models: {model:?} is listed twice"
+                ));
+            }
+        }
+        if !PROVIDER_TIMEOUT_MS_RANGE.contains(&provider.timeout_ms) {
+            problems.push(format!(
+                "providers.{name}.timeout_ms: must be between {} and {}",
+                PROVIDER_TIMEOUT_MS_RANGE.start(),
+                PROVIDER_TIMEOUT_MS_RANGE.end()
+            ));
+        }
+        if problems.len() == before {
+            valid.insert(
+                name.clone(),
+                ProviderConfig {
+                    adapter: provider.adapter,
+                    models: provider.models.clone(),
+                    timeout: Duration::from_millis(provider.timeout_ms),
+                },
+            );
+        }
+    }
+    valid
+}
+
+fn validate_aliases(
+    aliases: &BTreeMap<String, FileAlias>,
+    providers: &BTreeMap<String, FileProvider>,
+    problems: &mut Vec<String>,
+) -> BTreeMap<String, Vec<Target>> {
+    let is_configured = |target: &Target| {
+        providers
+            .get(&target.provider)
+            .is_some_and(|provider| provider.models.contains(&target.model))
+    };
+    let mut valid = BTreeMap::new();
+    for (name, alias) in aliases {
+        let before = problems.len();
+        // A `/` would make the alias indistinguishable from a pin.
+        if name.is_empty() || name.contains('/') {
+            problems.push(format!(
+                "aliases.{name}: name must be non-empty and must not contain '/'"
+            ));
+        }
+        if alias.candidates.is_empty() {
+            problems.push(format!(
+                "aliases.{name}.candidates: must list at least one target"
+            ));
+        }
+        let mut targets = Vec::new();
+        for candidate in &alias.candidates {
+            match Target::parse(candidate) {
+                Some(target) if is_configured(&target) => targets.push(target),
+                Some(_) => problems.push(format!(
+                    "aliases.{name}.candidates: {candidate:?} is not a configured provider and model"
+                )),
+                None => problems.push(format!(
+                    "aliases.{name}.candidates: {candidate:?} must have the form provider/model"
+                )),
+            }
+        }
+        if problems.len() == before {
+            valid.insert(name.clone(), targets);
+        }
+    }
+    valid
 }
 
 #[cfg(test)]
@@ -358,6 +528,93 @@ mod tests {
 
         assert!(!debug.contains("hunter2"), "{debug}");
         assert!(!debug.contains(SECRET_URL), "{debug}");
+    }
+
+    #[test]
+    fn providers_and_aliases_are_loaded() {
+        let text = format!(
+            "{VALID}
+[providers.echo]
+adapter = \"echo\"
+models = [\"echo-1\"]
+
+\n             [aliases.default]
+candidates = [\"echo/echo-1\"]
+"
+        );
+
+        let config = Config::from_toml(&text, env_with_url).unwrap();
+
+        let echo = &config.providers["echo"];
+        assert_eq!(echo.adapter, AdapterKind::Echo);
+        assert_eq!(echo.timeout, Duration::from_secs(30));
+        assert_eq!(
+            config.catalog().resolve("default", true),
+            Ok(vec![Target::parse("echo/echo-1").unwrap()])
+        );
+    }
+
+    #[test]
+    fn provider_and_alias_problems_are_reported_together() {
+        let text = format!(
+            r#"{VALID}
+            [providers.Bad-Name]
+            adapter = "echo"
+            models = []
+            timeout_ms = 5
+
+            [providers.echo]
+            adapter = "echo"
+            models = ["echo-1", "echo-1"]
+
+            [aliases."has/slash"]
+            candidates = ["echo/echo-1"]
+
+            [aliases.broken]
+            candidates = ["nope/model", "no-slash"]
+
+            [aliases.empty]
+            candidates = []
+            "#
+        );
+
+        let error = Config::from_toml(&text, env_with_url)
+            .unwrap_err()
+            .to_string();
+
+        for expected in [
+            "providers.Bad-Name: name",
+            "providers.Bad-Name.models: must list",
+            "providers.Bad-Name.timeout_ms",
+            "providers.echo.models: \"echo-1\" is listed twice",
+            "aliases.has/slash: name",
+            "\"nope/model\" is not a configured",
+            "\"no-slash\" must have the form",
+            "aliases.empty.candidates: must list",
+        ] {
+            assert!(
+                error.contains(expected),
+                "missing {expected:?} in:
+{error}"
+            );
+        }
+        assert!(error.contains("8 problems"), "{error}");
+    }
+
+    #[test]
+    fn unknown_adapter_is_rejected() {
+        let text = format!(
+            "{VALID}
+[providers.x]
+adapter = \"carrier-pigeon\"
+models = [\"a\"]
+"
+        );
+
+        assert!(matches!(
+            Config::from_toml(&text, env_with_url),
+            Err(ConfigError::Parse(_))
+        ));
     }
 
     #[test]

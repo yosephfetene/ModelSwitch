@@ -95,6 +95,13 @@ Prerequisites: Rust (stable) and PostgreSQL 18.
     server never migrates on its own (ADR-022), so run `migrate` after
     pulling changes that add a migration.
 
+6.  Generate text with the built-in `echo` provider (configured in the
+    example file), using the key from step 5:
+
+    ``` bash
+    curl http://127.0.0.1:8080/v1/generate \n      -H "Authorization: Bearer <KEY>" \n      -H "Content-Type: application/json" \n      -d '{"model": "default", "input": "Hello, gateway"}'
+    ```
+
 ### With Docker (alternative)
 
 ``` bash
