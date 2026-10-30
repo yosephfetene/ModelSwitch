@@ -66,7 +66,7 @@ impl NewApiKey {
 
 /// SHA-256 of a full key. A fast hash is enough because keys are
 /// high-entropy, unlike passwords (ADR-012).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyHash([u8; 32]);
 
 impl KeyHash {
@@ -77,6 +77,14 @@ impl KeyHash {
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
+}
+
+/// Whether `token` has the exact shape of a key: `ms_dev_` plus 43 base62
+/// characters. Lets authentication reject junk without a database query.
+pub fn looks_like_key(token: &str) -> bool {
+    token.strip_prefix(DEV_PREFIX).is_some_and(|body| {
+        body.len() == BODY_LEN && body.bytes().all(|b| b.is_ascii_alphanumeric())
+    })
 }
 
 /// Encodes 32 bytes as exactly 43 base62 digits (big-endian, zero-padded)
@@ -213,6 +221,26 @@ mod tests {
 
         let debug = format!("{key:?}");
         assert!(!debug.contains(key.plaintext().expose_secret()), "{debug}");
+    }
+
+    #[test]
+    fn only_well_formed_keys_look_like_keys() {
+        let key = NewApiKey::generate().unwrap();
+        let valid = key.plaintext().expose_secret();
+        assert!(looks_like_key(valid));
+
+        let body = valid.strip_prefix("ms_dev_").unwrap();
+        for token in [
+            "",
+            "hello",
+            body,
+            &format!("ms_live_{body}"),
+            &valid[..valid.len() - 1],
+            &format!("{valid}x"),
+            &format!("ms_dev_{}-", &body[1..]),
+        ] {
+            assert!(!looks_like_key(token), "{token:?}");
+        }
     }
 
     #[test]

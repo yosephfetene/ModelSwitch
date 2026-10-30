@@ -11,6 +11,7 @@ use tracing::Level;
 use crate::api;
 use crate::api::error::ApiError;
 use crate::storage::DatabaseCheck;
+use crate::storage::api_keys::KeyStore;
 
 /// Shared state handed to every request handler.
 #[derive(Clone)]
@@ -20,11 +21,24 @@ pub struct AppState {
     pub db: Arc<dyn DatabaseCheck>,
     /// Upper bound on how long readiness waits for the database.
     pub db_check_timeout: Duration,
+    /// API key lookup, a trait object for the same reason.
+    pub keys: Arc<dyn KeyStore>,
+    /// Upper bound on how long authentication waits for the key lookup.
+    pub auth_timeout: Duration,
 }
 
 /// Builds the complete HTTP application.
 pub fn build_router(state: AppState) -> Router {
     with_middleware(Router::new().merge(api::health::router())).with_state(state)
+}
+
+/// Requires a valid API key on every route in `routes` (the `/v1` API).
+/// A route layer, so unknown paths still get 404 rather than 401.
+pub fn require_api_key(routes: Router<AppState>, state: &AppState) -> Router<AppState> {
+    routes.route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        api::auth::require_api_key,
+    ))
 }
 
 /// Adds the fallbacks and middleware every route shares. Public so tests

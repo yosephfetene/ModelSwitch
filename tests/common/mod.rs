@@ -3,7 +3,9 @@
 // Each test file is its own crate and uses a different subset of these.
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::io;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -15,6 +17,11 @@ use serde_json::Value;
 use tower::ServiceExt;
 use tracing_subscriber::fmt::MakeWriter;
 
+use secrecy::ExposeSecret;
+use uuid::Uuid;
+
+use modelswitch::auth::api_key::{KeyHash, NewApiKey};
+use modelswitch::storage::api_keys::{KeyLookup, KeyStore, KeyStoreError};
 use modelswitch::storage::{BoxFuture, DatabaseCheck, PingError};
 use modelswitch::{AppState, build_router};
 
@@ -23,6 +30,7 @@ pub const SENSITIVE_ERROR: &str =
     "connection refused: postgres://modelswitch:hunter2@db.internal:5432/modelswitch_dev";
 
 pub const DB_CHECK_TIMEOUT: Duration = Duration::from_secs(1);
+pub const AUTH_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy)]
 pub enum DbMode {
@@ -63,10 +71,78 @@ impl DatabaseCheck for FakeDatabase {
     }
 }
 
+/// A key store whose contents and availability the test controls. Counts
+/// lookups, so tests can assert the database was never asked.
+#[derive(Clone)]
+pub struct FakeKeyStore {
+    mode: Arc<Mutex<DbMode>>,
+    keys: Arc<Mutex<HashMap<KeyHash, KeyLookup>>>,
+    lookups: Arc<AtomicUsize>,
+}
+
+impl FakeKeyStore {
+    pub fn new(mode: DbMode) -> Self {
+        Self {
+            mode: Arc::new(Mutex::new(mode)),
+            keys: Arc::default(),
+            lookups: Arc::default(),
+        }
+    }
+
+    pub fn set(&self, mode: DbMode) {
+        *self.mode.lock().unwrap() = mode;
+    }
+
+    /// Stores a new active key and returns its plaintext and ID.
+    pub fn add_key(&self) -> (String, Uuid) {
+        let key = NewApiKey::generate().unwrap();
+        let id = Uuid::now_v7();
+        self.keys
+            .lock()
+            .unwrap()
+            .insert(key.hash(), KeyLookup { id, revoked: false });
+        (key.plaintext().expose_secret().to_owned(), id)
+    }
+
+    pub fn revoke(&self, key: &str) {
+        if let Some(entry) = self.keys.lock().unwrap().get_mut(&KeyHash::of(key)) {
+            entry.revoked = true;
+        }
+    }
+
+    pub fn lookups(&self) -> usize {
+        self.lookups.load(Ordering::SeqCst)
+    }
+}
+
+impl KeyStore for FakeKeyStore {
+    fn find_by_hash(
+        &self,
+        hash: KeyHash,
+    ) -> BoxFuture<'_, Result<Option<KeyLookup>, KeyStoreError>> {
+        self.lookups.fetch_add(1, Ordering::SeqCst);
+        let mode = *self.mode.lock().unwrap();
+        let found = self.keys.lock().unwrap().get(&hash).copied();
+        Box::pin(async move {
+            match mode {
+                DbMode::Up => Ok(found),
+                DbMode::Down => Err(KeyStoreError(SENSITIVE_ERROR.to_owned())),
+                DbMode::Hang => std::future::pending().await,
+            }
+        })
+    }
+}
+
 pub fn state(db: FakeDatabase) -> AppState {
+    state_with_keys(db, FakeKeyStore::new(DbMode::Up))
+}
+
+pub fn state_with_keys(db: FakeDatabase, keys: FakeKeyStore) -> AppState {
     AppState {
         db: Arc::new(db),
         db_check_timeout: DB_CHECK_TIMEOUT,
+        keys: Arc::new(keys),
+        auth_timeout: AUTH_TIMEOUT,
     }
 }
 

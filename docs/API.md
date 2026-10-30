@@ -16,6 +16,13 @@ This is a placeholder, not a real key. Keys use an environment prefix
 shown once on creation, stored only as SHA-256 hashes, and can be
 revoked (see ADR-012).
 
+Every `/v1/*` route requires a key; `/health/*` never does. A missing,
+malformed, unknown, or revoked key gets the same `401 unauthorized`
+with `WWW-Authenticate: Bearer`, so clients cannot tell which. If the
+key cannot be checked because the database is down or slow, the
+request is refused with `503 service_unavailable` (fail closed); retry
+later. Revocation takes effect on the next request (ADR-023).
+
 ## `POST /v1/generate`
 
 ### Example request
@@ -130,8 +137,9 @@ Response:
 
 Every error, on every route, uses this shape. Clients branch on
 `error.code`, which is stable; `error.message` is for humans and may
-change. Codes implemented so far: `invalid_request` (400), `not_found`
-(404), `method_not_allowed` (405), `internal_error` (500).
+change. Codes implemented so far: `invalid_request` (400), `unauthorized`
+(401), `not_found` (404), `method_not_allowed` (405), `internal_error`
+(500), `service_unavailable` (503).
 
 ### Suggested status mapping
 
