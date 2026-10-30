@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use uuid::Uuid;
 
 use modelswitch::config::Config;
+use modelswitch::providers::Registry;
 use modelswitch::storage::api_keys::PgKeyStore;
 use modelswitch::storage::{self, PgDatabaseCheck};
 use modelswitch::{AppState, build_router, cli, observability};
@@ -108,6 +109,8 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         db_check_timeout: config.health.database_timeout,
         keys: Arc::new(PgKeyStore::new(pool)),
         auth_timeout: config.auth.database_timeout,
+        catalog: Arc::new(config.catalog()),
+        providers: Arc::new(Registry::from_config(&config.providers)),
     };
 
     let listener = tokio::net::TcpListener::bind(config.server.bind)

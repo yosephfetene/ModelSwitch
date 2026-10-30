@@ -32,8 +32,7 @@ later. Revocation takes effect on the next request (ADR-023).
   "model": "fast-cheap",
   "input": "Summarize the main trade-offs in this design.",
   "routing": { "fallback": true },
-  "max_output_tokens": 500,
-  "metadata": { "feature": "design-review" }
+  "max_output_tokens": 500
 }
 ```
 
@@ -43,10 +42,18 @@ later. Revocation takes effect on the next request (ADR-023).
 -   `routing.fallback`: optional, default `true`. When `false`, an
     alias uses only its first eligible candidate. Ignored for pins,
     which never fall back.
--   `routing.policy`: reserved; semantics are decided in Stage 1.
-    Clients cannot override privileged operator rules.
--   `max_output_tokens`: optional validated output limit.
--   `metadata`: optional bounded, non-sensitive metadata.
+-   `routing.policy`: reserved, not yet accepted. Clients will not be
+    able to override privileged operator rules.
+-   `max_output_tokens`: optional, 1--100000, passed to the provider.
+-   `metadata`: planned (optional bounded, non-sensitive metadata); not
+    yet accepted.
+-   The body must be `application/json`, at most 1 MiB, with no fields
+    beyond these; anything else is rejected before routing.
+-   Until the reliability executor (Stage 2), only the first eligible
+    candidate is called; a failure is returned rather than retried.
+-   The built-in `echo` provider returns the input unchanged and
+    reports no usage, so the gateway can be tried without provider
+    credentials (ADR-024).
 
 ### Model selection
 
@@ -78,7 +85,7 @@ with `422`.
 
 ``` json
 {
-  "id": "req_01JEXAMPLE",
+  "id": "req_019a2f4c-8e7b-7c3d-9f1a-2b3c4d5e6f70",
   "model": "fast-cheap",
   "provider": "gemini",
   "resolved_model": "gemini-flash",
@@ -138,14 +145,17 @@ Response:
 Every error, on every route, uses this shape. Clients branch on
 `error.code`, which is stable; `error.message` is for humans and may
 change. Codes implemented so far: `invalid_request` (400), `unauthorized`
-(401), `not_found` (404), `method_not_allowed` (405), `internal_error`
-(500), `service_unavailable` (503).
+(401), `not_found` (404), `method_not_allowed` (405),
+`payload_too_large` (413), `unknown_model` (422), `internal_error` (500),
+`provider_error` (502), `service_unavailable` (503), `upstream_timeout`
+(504).
 
 ### Suggested status mapping
 
 | Condition | HTTP status |
 |---|---:|
 | Invalid JSON, fields, or correlation ID | 400 |
+| Request body over 1 MiB | 413 |
 | Missing/invalid/revoked key | 401 |
 | Authenticated but not permitted | 403 |
 | Unknown route | 404 |

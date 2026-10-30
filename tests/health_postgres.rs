@@ -21,6 +21,8 @@ async fn ready_returns_ok_when_database_reachable(pool: PgPool) {
         db_check_timeout: Duration::from_secs(1),
         keys: Arc::new(PgKeyStore::new(pool)),
         auth_timeout: Duration::from_secs(1),
+        catalog: Default::default(),
+        providers: Default::default(),
     });
 
     let response = app

@@ -14,3 +14,11 @@ database_timeout_ms = 1000
 
 [log]
 format = "json"
+
+# Built-in provider so the image works without provider credentials.
+[providers.echo]
+adapter = "echo"
+models = ["echo-1"]
+
+[aliases.default]
+candidates = ["echo/echo-1"]

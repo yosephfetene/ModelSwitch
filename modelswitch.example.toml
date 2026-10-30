@@ -19,6 +19,17 @@ database_timeout_ms = 1000
 # Past this, the request is refused with 503, never let through.
 database_timeout_ms = 1000
 
+# Providers by name. `adapter` is the wire format; more adapters arrive
+# with their slices. `timeout_ms` bounds one call (1000-300000, default 30000).
+[providers.echo]
+adapter = "echo"   # built in: returns the input unchanged, no credentials
+models = ["echo-1"]
+
+# Aliases: ordered `provider/model` candidates. Clients send the alias
+# name or a `provider/model` pin as `model`.
+[aliases.default]
+candidates = ["echo/echo-1"]
+
 [log]
 # "pretty" for local development, "json" for CI and production.
 # The level comes from the RUST_LOG environment variable (default: info).

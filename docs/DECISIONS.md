@@ -410,3 +410,28 @@ was ever valid. Clients receive an actionable code: 401 means fix the
 key, 503 means retry later. Junk credentials cannot load PostgreSQL. A
 database outage stops all `/v1` traffic, which is the intended trade
 for never serving unauthenticated requests.
+
+## ADR-024 --- Built-in echo provider; first candidate only until Stage 2
+
+**Status:** Accepted.
+
+**Context:** `POST /v1/generate` should be usable end to end before the
+first real adapter exists, and anyone cloning the repository should be
+able to try it without a provider account. Fallback down an alias's
+candidates belongs to the reliability executor, which has its own
+design work in Stage 2.
+
+**Decision:** An `echo` adapter is built in: it returns the input
+unchanged and reports no usage. Operators configure it like any other
+provider (`adapter = "echo"`). Routing resolves an alias to its full
+ordered candidate list, but until the executor exists the handler calls
+only the first candidate and returns its failure (502) or timeout (504)
+without trying another. Provider names are limited to `a-z`, `0-9`, `-`,
+and `_`; alias names may not contain `/`, so an alias can never be
+mistaken for a pin. `metadata` and `routing.policy` are rejected until a
+slice gives them meaning.
+
+**Consequences:** The full request path (auth, validation, routing,
+deadline, response shape) is exercised without network access or
+credentials, in tests and in demos. Aliases do not yet improve
+availability; that arrives with Stage 2 without changing the API.

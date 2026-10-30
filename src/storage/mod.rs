@@ -1,7 +1,5 @@
 pub mod api_keys;
 
-use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
 use secrecy::ExposeSecret;
@@ -10,10 +8,8 @@ use sqlx::postgres::PgPoolOptions;
 
 use crate::config::DatabaseConfig;
 
-/// A boxed future, so `DatabaseCheck` can be used as a trait object
-/// (`Arc<dyn DatabaseCheck>`). Plain `async fn` in traits is not yet
-/// usable through `dyn`.
-pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+// Defined in the domain so domain code need not depend on storage.
+pub use crate::domain::BoxFuture;
 
 /// Why a database ping failed. The message is for logs only; it must
 /// never be copied into an HTTP response.

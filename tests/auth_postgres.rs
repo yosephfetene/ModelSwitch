@@ -27,6 +27,8 @@ async fn end_to_end_with_postgres(pool: PgPool) {
         db_check_timeout: DB_CHECK_TIMEOUT,
         keys: Arc::new(PgKeyStore::new(pool.clone())),
         auth_timeout: AUTH_TIMEOUT,
+        catalog: Default::default(),
+        providers: Default::default(),
     };
     let v1 = Router::new().route(
         "/v1/whoami",

@@ -9,7 +9,10 @@ pub mod app;
 pub mod auth;
 pub mod cli;
 pub mod config;
+pub mod domain;
 pub mod observability;
+pub mod providers;
+pub mod routing;
 pub mod storage;
 
 pub use app::{AppState, build_router};
