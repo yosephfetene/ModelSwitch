@@ -336,7 +336,7 @@ async fn echo_provider_from_config_answers_end_to_end() {
     let (key, _) = keys.add_key();
     let mut state = state_with_keys(FakeDatabase::new(DbMode::Up), keys);
     state.catalog = Arc::new(config.catalog());
-    state.providers = Arc::new(Registry::from_config(&config.providers));
+    state.providers = Arc::new(Registry::from_config(&config.providers).unwrap());
     let app = build_router(state);
 
     let request = Request::post("/v1/generate")

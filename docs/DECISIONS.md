@@ -435,3 +435,31 @@ slice gives them meaning.
 deadline, response shape) is exercised without network access or
 credentials, in tests and in demos. Aliases do not yet improve
 availability; that arrives with Stage 2 without changing the API.
+
+## ADR-025 --- Hardened outbound calls to OpenAI-compatible providers
+
+**Status:** Accepted.
+
+**Context:** The first real adapter sends a provider API key and client
+prompts to a URL taken from configuration, and returns text from a
+system we do not control. A misconfiguration or a misbehaving endpoint
+should not leak the key or the prompt, or exhaust memory.
+
+**Decision:** The OpenAI-compatible adapter calls
+`POST {base_url}/chat/completions` with one user message and
+`stream: false`, using `max_tokens` (accepted by both Groq and Ollama).
+`base_url` must be `https`, except plain `http` to this machine (local
+Ollama); credentials, queries, and fragments in the URL are refused.
+Provider keys come from the environment variable named by `api_key_env`
+and are sent only as a bearer token. HTTP redirects are never followed.
+Response bodies are capped at 4 MiB. On an error status only the
+provider's short error code (`error.code`, else `error.type`, when it
+looks like an identifier) is kept; the message text is discarded
+because it can quote the prompt. TLS uses rustls with the `ring`
+backend, shared with sqlx.
+
+**Consequences:** A key cannot be bounced to another host, sent in clear
+text over the network, or written to logs through a URL. Error logs
+keep enough to classify failures (status and code, which Stage 2 needs
+for retry decisions) without prompt content. A provider that relies on
+redirects will fail visibly with its 3xx status.

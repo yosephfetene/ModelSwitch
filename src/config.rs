@@ -69,18 +69,30 @@ pub struct LogConfig {
     pub format: LogFormat,
 }
 
-/// Which wire format a provider speaks. More adapters arrive with their
-/// slices (OpenAI-compatible, Gemini).
+/// Which wire format a provider speaks, as written in the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AdapterKind {
     /// Built-in: returns the input unchanged; needs no credentials.
     Echo,
+    /// OpenAI chat completions API: Groq, Ollama (ADR-008).
+    OpenaiCompatible,
+}
+
+/// A validated adapter with the settings it needs.
+#[derive(Debug)]
+pub enum AdapterConfig {
+    Echo,
+    OpenaiCompatible {
+        base_url: String,
+        /// `None` for endpoints that need no key, such as local Ollama.
+        api_key: Option<SecretString>,
+    },
 }
 
 #[derive(Debug)]
 pub struct ProviderConfig {
-    pub adapter: AdapterKind,
+    pub adapter: AdapterConfig,
     pub models: Vec<String>,
     /// Deadline for one call to this provider.
     pub timeout: Duration,
@@ -168,6 +180,10 @@ impl Default for FileLog {
 #[serde(deny_unknown_fields)]
 pub struct FileProvider {
     pub adapter: AdapterKind,
+    /// API root for `openai_compatible`, e.g. `https://api.groq.com/openai/v1`.
+    pub base_url: Option<String>,
+    /// Name of the environment variable holding the provider's API key.
+    pub api_key_env: Option<String>,
     pub models: Vec<String>,
     #[serde(default = "default_provider_timeout_ms")]
     pub timeout_ms: u64,
@@ -306,7 +322,7 @@ impl Config {
             ));
         }
 
-        let providers = validate_providers(&file.providers, &mut problems);
+        let providers = validate_providers(&file.providers, &env, &mut problems);
         let aliases = validate_aliases(&file.aliases, &file.providers, &mut problems);
 
         match url {
@@ -356,8 +372,106 @@ fn is_valid_provider_name(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
+/// Checks `base_url` for the OpenAI-compatible adapter. Plain HTTP is
+/// allowed only to this machine (local Ollama): elsewhere the API key
+/// and prompts would cross the network unencrypted. Credentials in the
+/// URL are refused because URLs end up in logs.
+fn validate_base_url(name: &str, base_url: &str, problems: &mut Vec<String>) -> bool {
+    let field = format!("providers.{name}.base_url");
+    let Ok(url) = url::Url::parse(base_url) else {
+        problems.push(format!("{field}: must be an absolute http(s) URL"));
+        return false;
+    };
+    let loopback = match url.host() {
+        Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    let problem = match url.scheme() {
+        _ if url.host().is_none() => Some("must include a host"),
+        "https" => None,
+        "http" if loopback => None,
+        "http" => Some("must use https unless the host is this machine (localhost)"),
+        _ => Some("must be an absolute http(s) URL"),
+    }
+    .or_else(|| {
+        (!url.username().is_empty() || url.password().is_some())
+            .then_some("must not contain credentials; use api_key_env")
+    })
+    .or_else(|| {
+        (url.query().is_some() || url.fragment().is_some())
+            .then_some("must not contain a query or fragment")
+    });
+    match problem {
+        Some(problem) => {
+            problems.push(format!("{field}: {problem}"));
+            false
+        }
+        None => true,
+    }
+}
+
+fn validate_adapter(
+    name: &str,
+    provider: &FileProvider,
+    env: &impl Fn(&str) -> Option<String>,
+    problems: &mut Vec<String>,
+) -> Option<AdapterConfig> {
+    match provider.adapter {
+        AdapterKind::Echo => {
+            if provider.base_url.is_some() || provider.api_key_env.is_some() {
+                problems.push(format!(
+                    "providers.{name}: the echo adapter takes no base_url or api_key_env"
+                ));
+                return None;
+            }
+            Some(AdapterConfig::Echo)
+        }
+        AdapterKind::OpenaiCompatible => {
+            let base_url = match &provider.base_url {
+                Some(base_url) => {
+                    validate_base_url(name, base_url, problems).then(|| base_url.clone())
+                }
+                None => {
+                    problems.push(format!(
+                        "providers.{name}.base_url: required for the openai_compatible adapter"
+                    ));
+                    None
+                }
+            };
+            let api_key = match provider.api_key_env.as_deref().map(str::trim) {
+                None => Some(None),
+                Some("") => {
+                    problems.push(format!(
+                        "providers.{name}.api_key_env: must name an environment variable"
+                    ));
+                    None
+                }
+                Some(var) => match env(var) {
+                    Some(value) if !value.trim().is_empty() => {
+                        Some(Some(SecretString::from(value)))
+                    }
+                    // Name the variable, never print a value.
+                    _ => {
+                        problems.push(format!(
+                            "providers.{name}.api_key_env: environment variable {var} is not set"
+                        ));
+                        None
+                    }
+                },
+            };
+            Some(AdapterConfig::OpenaiCompatible {
+                base_url: base_url?,
+                api_key: api_key?,
+            })
+        }
+    }
+}
+
 fn validate_providers(
     providers: &BTreeMap<String, FileProvider>,
+    env: &impl Fn(&str) -> Option<String>,
     problems: &mut Vec<String>,
 ) -> BTreeMap<String, ProviderConfig> {
     let mut valid = BTreeMap::new();
@@ -392,11 +506,12 @@ fn validate_providers(
                 PROVIDER_TIMEOUT_MS_RANGE.end()
             ));
         }
-        if problems.len() == before {
+        let adapter = validate_adapter(name, provider, env, problems);
+        if let (Some(adapter), true) = (adapter, problems.len() == before) {
             valid.insert(
                 name.clone(),
                 ProviderConfig {
-                    adapter: provider.adapter,
+                    adapter,
                     models: provider.models.clone(),
                     timeout: Duration::from_millis(provider.timeout_ms),
                 },
@@ -451,6 +566,8 @@ fn validate_aliases(
 
 #[cfg(test)]
 mod tests {
+    use secrecy::ExposeSecret;
+
     use super::*;
 
     const SECRET_URL: &str = "postgres://modelswitch:hunter2@localhost:5432/modelswitch_dev";
@@ -546,7 +663,7 @@ candidates = [\"echo/echo-1\"]
         let config = Config::from_toml(&text, env_with_url).unwrap();
 
         let echo = &config.providers["echo"];
-        assert_eq!(echo.adapter, AdapterKind::Echo);
+        assert!(matches!(echo.adapter, AdapterConfig::Echo));
         assert_eq!(echo.timeout, Duration::from_secs(30));
         assert_eq!(
             config.catalog().resolve("default", true),
@@ -594,11 +711,102 @@ candidates = [\"echo/echo-1\"]
         ] {
             assert!(
                 error.contains(expected),
-                "missing {expected:?} in:
-{error}"
+                "missing {expected:?} in:\n{error}"
             );
         }
         assert!(error.contains("8 problems"), "{error}");
+    }
+
+    fn with_provider(provider: &str) -> String {
+        format!("{VALID}\n[providers.p]\n{provider}\nmodels = [\"m\"]\n")
+    }
+
+    fn env_with_key(name: &str) -> Option<String> {
+        match name {
+            "GROQ_API_KEY" => Some("gsk_secret_value".to_owned()),
+            _ => env_with_url(name),
+        }
+    }
+
+    #[test]
+    fn openai_compatible_provider_is_loaded_with_its_key() {
+        let text = with_provider(
+            "adapter = \"openai_compatible\"\n\
+             base_url = \"https://api.groq.com/openai/v1\"\n\
+             api_key_env = \"GROQ_API_KEY\"",
+        );
+
+        let config = Config::from_toml(&text, env_with_key).unwrap();
+
+        let AdapterConfig::OpenaiCompatible { base_url, api_key } = &config.providers["p"].adapter
+        else {
+            panic!("wrong adapter");
+        };
+        assert_eq!(base_url, "https://api.groq.com/openai/v1");
+        assert_eq!(
+            api_key.as_ref().unwrap().expose_secret(),
+            "gsk_secret_value"
+        );
+        assert!(!format!("{config:?}").contains("gsk_secret_value"));
+    }
+
+    #[test]
+    fn plain_http_is_allowed_only_to_this_machine() {
+        for base_url in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:11434/v1",
+            "http://[::1]:11434/v1",
+        ] {
+            let text = with_provider(&format!(
+                "adapter = \"openai_compatible\"\nbase_url = \"{base_url}\""
+            ));
+            assert!(Config::from_toml(&text, env_with_url).is_ok(), "{base_url}");
+        }
+    }
+
+    #[test]
+    fn bad_openai_compatible_settings_are_reported() {
+        let cases = [
+            ("", "base_url: required"),
+            ("base_url = \"http://api.example.com/v1\"", "must use https"),
+            (
+                "base_url = \"https://user:pw@api.example.com/v1\"",
+                "must not contain credentials",
+            ),
+            (
+                "base_url = \"https://api.example.com/v1?key=x\"",
+                "query or fragment",
+            ),
+            (
+                "base_url = \"ftp://api.example.com\"",
+                "absolute http(s) URL",
+            ),
+            ("base_url = \"not a url\"", "absolute http(s) URL"),
+            (
+                "base_url = \"https://api.example.com/v1\"\napi_key_env = \"MISSING_KEY\"",
+                "MISSING_KEY is not set",
+            ),
+        ];
+        for (settings, expected) in cases {
+            let text = with_provider(&format!("adapter = \"openai_compatible\"\n{settings}"));
+
+            let error = Config::from_toml(&text, env_with_key)
+                .unwrap_err()
+                .to_string();
+
+            assert!(error.contains(expected), "{settings:?}: {error}");
+        }
+    }
+
+    #[test]
+    fn echo_rejects_connection_settings() {
+        let text = with_provider("adapter = \"echo\"\nbase_url = \"https://x.example\"");
+
+        let error = Config::from_toml(&text, env_with_url)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("echo adapter takes no base_url"), "{error}");
     }
 
     #[test]

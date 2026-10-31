@@ -1,12 +1,13 @@
 //! Provider adapters and the registry of configured providers.
 
 pub mod echo;
+pub mod openai_compat;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::{AdapterKind, ProviderConfig};
+use crate::config::{AdapterConfig, ProviderConfig};
 use crate::domain::Provider;
 
 /// A configured provider, ready to call.
@@ -23,6 +24,14 @@ pub struct Registry {
     slots: HashMap<String, ProviderSlot>,
 }
 
+/// A provider could not be set up (for example, its HTTP client).
+#[derive(Debug, thiserror::Error)]
+#[error("provider {name}: {reason}")]
+pub struct BuildError {
+    pub name: String,
+    pub reason: String,
+}
+
 impl Registry {
     pub fn new(slots: impl IntoIterator<Item = (String, ProviderSlot)>) -> Self {
         Self {
@@ -33,17 +42,27 @@ impl Registry {
     /// Builds every provider named in the configuration.
     pub fn from_config<'a>(
         providers: impl IntoIterator<Item = (&'a String, &'a ProviderConfig)>,
-    ) -> Self {
-        Self::new(providers.into_iter().map(|(name, config)| {
-            let provider: Arc<dyn Provider> = match config.adapter {
-                AdapterKind::Echo => Arc::new(echo::EchoProvider),
+    ) -> Result<Self, BuildError> {
+        let mut slots = HashMap::new();
+        for (name, config) in providers {
+            let provider: Arc<dyn Provider> = match &config.adapter {
+                AdapterConfig::Echo => Arc::new(echo::EchoProvider),
+                AdapterConfig::OpenaiCompatible { base_url, api_key } => Arc::new(
+                    openai_compat::OpenAiCompatible::new(base_url, api_key.clone()).map_err(
+                        |error| BuildError {
+                            name: name.clone(),
+                            reason: error.to_string(),
+                        },
+                    )?,
+                ),
             };
             let slot = ProviderSlot {
                 provider,
                 timeout: config.timeout,
             };
-            (name.clone(), slot)
-        }))
+            slots.insert(name.clone(), slot);
+        }
+        Ok(Self { slots })
     }
 
     pub fn get(&self, name: &str) -> Option<&ProviderSlot> {
