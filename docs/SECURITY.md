@@ -39,6 +39,10 @@
     (ADR-023). Neither the key nor the `Authorization` header is logged.
 -   Third-party provider data: free-tier providers may use submitted
     prompts; send only test data to them.
+-   Outbound calls: provider URLs must use https (plain http only to
+    localhost), redirects are never followed, provider responses are
+    capped at 4 MiB, and provider error messages are discarded in favor
+    of their short error code (ADR-025).
 
 ## Secret handling
 
