@@ -25,6 +25,22 @@ database_timeout_ms = 1000
 adapter = "echo"   # built in: returns the input unchanged, no credentials
 models = ["echo-1"]
 
+# Groq (free tier) through the OpenAI-compatible adapter. Uncomment and
+# set GROQ_API_KEY in .env. Groq retires models often: check current IDs
+# in the Groq console. IDs may contain `/`; pin them as
+# `groq/openai/gpt-oss-20b` (only the first `/` separates the provider).
+# [providers.groq]
+# adapter = "openai_compatible"
+# base_url = "https://api.groq.com/openai/v1"
+# api_key_env = "GROQ_API_KEY"
+# models = ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]
+
+# Local Ollama (no key; plain http is allowed only to localhost).
+# [providers.ollama]
+# adapter = "openai_compatible"
+# base_url = "http://localhost:11434/v1"
+# models = ["llama3.2"]
+
 # Aliases: ordered `provider/model` candidates. Clients send the alias
 # name or a `provider/model` pin as `model`.
 [aliases.default]

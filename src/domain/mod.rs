@@ -88,8 +88,16 @@ impl Usage {
 /// Retry classification arrives with the reliability executor (Stage 2).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProviderError {
+    /// The request could not be sent or the response not received
+    /// (connection refused, TLS failure, reset).
     #[error("provider request failed: {0}")]
     Request(String),
+    /// The provider answered with a non-success HTTP status. `code` is
+    /// the provider's short error identifier when it sent one (such as
+    /// `rate_limit_exceeded`), never its free-text message, which can
+    /// quote the prompt.
+    #[error("provider returned HTTP {status}{}", code.as_deref().map(|c| format!(" ({c})")).unwrap_or_default())]
+    Status { status: u16, code: Option<String> },
     #[error("provider returned an unusable response: {0}")]
     InvalidResponse(String),
 }
