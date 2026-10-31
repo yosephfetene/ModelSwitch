@@ -100,6 +100,13 @@ pub enum ProviderError {
     Status { status: u16, code: Option<String> },
     #[error("provider returned an unusable response: {0}")]
     InvalidResponse(String),
+    /// The provider declined to answer, for example because of a safety
+    /// filter. `reason` is the provider's short identifier (such as
+    /// `SAFETY`), never its explanation. Kept apart from failures so
+    /// Stage 2 can decide not to retry a prompt that will be refused
+    /// again.
+    #[error("provider blocked the request{}", reason.as_deref().map(|r| format!(" ({r})")).unwrap_or_default())]
+    Blocked { reason: Option<String> },
 }
 
 /// The contract every provider adapter implements (FR-03). An adapter

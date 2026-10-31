@@ -46,8 +46,9 @@ src/
     selector.rs
   providers/
     mod.rs
+    http.rs            # shared client, size cap, error-code filter
     openai_compat.rs   # Groq, Ollama
-    gemini.rs
+    gemini.rs          # Google Gemini
   reliability/
     mod.rs
     executor.rs

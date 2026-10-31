@@ -35,6 +35,15 @@ models = ["echo-1"]
 # api_key_env = "GROQ_API_KEY"
 # models = ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]
 
+# Google Gemini (free tier). Uncomment and set GEMINI_API_KEY in .env.
+# Free-tier prompts may be used by Google: send only test data.
+# Model names here must be plain IDs (no `models/` prefix).
+# [providers.gemini]
+# adapter = "gemini"
+# base_url = "https://generativelanguage.googleapis.com/v1beta"
+# api_key_env = "GEMINI_API_KEY"
+# models = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+
 # Local Ollama (no key; plain http is allowed only to localhost).
 # [providers.ollama]
 # adapter = "openai_compatible"

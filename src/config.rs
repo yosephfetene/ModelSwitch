@@ -77,6 +77,8 @@ pub enum AdapterKind {
     Echo,
     /// OpenAI chat completions API: Groq, Ollama (ADR-008).
     OpenaiCompatible,
+    /// Google Gemini API (ADR-008, ADR-026).
+    Gemini,
 }
 
 /// A validated adapter with the settings it needs.
@@ -87,6 +89,10 @@ pub enum AdapterConfig {
         base_url: String,
         /// `None` for endpoints that need no key, such as local Ollama.
         api_key: Option<SecretString>,
+    },
+    Gemini {
+        base_url: String,
+        api_key: SecretString,
     },
 }
 
@@ -180,7 +186,7 @@ impl Default for FileLog {
 #[serde(deny_unknown_fields)]
 pub struct FileProvider {
     pub adapter: AdapterKind,
-    /// API root for `openai_compatible`, e.g. `https://api.groq.com/openai/v1`.
+    /// API root, e.g. `https://api.groq.com/openai/v1`.
     pub base_url: Option<String>,
     /// Name of the environment variable holding the provider's API key.
     pub api_key_env: Option<String>,
@@ -372,7 +378,7 @@ fn is_valid_provider_name(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
-/// Checks `base_url` for the OpenAI-compatible adapter. Plain HTTP is
+/// Checks a network adapter's `base_url`. Plain HTTP is
 /// allowed only to this machine (local Ollama): elsewhere the API key
 /// and prompts would cross the network unencrypted. Credentials in the
 /// URL are refused because URLs end up in logs.
@@ -429,44 +435,94 @@ fn validate_adapter(
             Some(AdapterConfig::Echo)
         }
         AdapterKind::OpenaiCompatible => {
-            let base_url = match &provider.base_url {
-                Some(base_url) => {
-                    validate_base_url(name, base_url, problems).then(|| base_url.clone())
-                }
-                None => {
-                    problems.push(format!(
-                        "providers.{name}.base_url: required for the openai_compatible adapter"
-                    ));
-                    None
-                }
-            };
-            let api_key = match provider.api_key_env.as_deref().map(str::trim) {
-                None => Some(None),
-                Some("") => {
-                    problems.push(format!(
-                        "providers.{name}.api_key_env: must name an environment variable"
-                    ));
-                    None
-                }
-                Some(var) => match env(var) {
-                    Some(value) if !value.trim().is_empty() => {
-                        Some(Some(SecretString::from(value)))
-                    }
-                    // Name the variable, never print a value.
-                    _ => {
-                        problems.push(format!(
-                            "providers.{name}.api_key_env: environment variable {var} is not set"
-                        ));
-                        None
-                    }
-                },
-            };
+            let base_url = base_url_setting(name, provider, "openai_compatible", problems);
+            let api_key = api_key_setting(name, provider, env, problems);
             Some(AdapterConfig::OpenaiCompatible {
                 base_url: base_url?,
                 api_key: api_key?,
             })
         }
+        AdapterKind::Gemini => {
+            let base_url = base_url_setting(name, provider, "gemini", problems);
+            let api_key = match api_key_setting(name, provider, env, problems) {
+                Some(Some(key)) => Some(key),
+                Some(None) => {
+                    problems.push(format!(
+                        "providers.{name}.api_key_env: required for the gemini adapter"
+                    ));
+                    None
+                }
+                None => None,
+            };
+            // The gemini adapter puts the model name in the URL path.
+            for model in &provider.models {
+                if !is_plain_model_name(model) {
+                    problems.push(format!(
+                        "providers.{name}.models: {model:?} must use only letters, digits, '.', '-' and '_'"
+                    ));
+                }
+            }
+            Some(AdapterConfig::Gemini {
+                base_url: base_url?,
+                api_key: api_key?,
+            })
+        }
     }
+}
+
+/// The validated `base_url`, which `adapter` requires.
+fn base_url_setting(
+    name: &str,
+    provider: &FileProvider,
+    adapter: &str,
+    problems: &mut Vec<String>,
+) -> Option<String> {
+    match &provider.base_url {
+        Some(base_url) => validate_base_url(name, base_url, problems).then(|| base_url.clone()),
+        None => {
+            problems.push(format!(
+                "providers.{name}.base_url: required for the {adapter} adapter"
+            ));
+            None
+        }
+    }
+}
+
+/// The key read from the variable `api_key_env` names: `Some(None)` when
+/// no variable is named, `None` after reporting a problem.
+fn api_key_setting(
+    name: &str,
+    provider: &FileProvider,
+    env: &impl Fn(&str) -> Option<String>,
+    problems: &mut Vec<String>,
+) -> Option<Option<SecretString>> {
+    match provider.api_key_env.as_deref().map(str::trim) {
+        None => Some(None),
+        Some("") => {
+            problems.push(format!(
+                "providers.{name}.api_key_env: must name an environment variable"
+            ));
+            None
+        }
+        Some(var) => match env(var) {
+            Some(value) if !value.trim().is_empty() => Some(Some(SecretString::from(value))),
+            // Name the variable, never print a value.
+            _ => {
+                problems.push(format!(
+                    "providers.{name}.api_key_env: environment variable {var} is not set"
+                ));
+                None
+            }
+        },
+    }
+}
+
+/// 1-128 of `A-Z a-z 0-9 . - _`: safe to place in a URL path.
+fn is_plain_model_name(model: &str) -> bool {
+    (1..=128).contains(&model.len())
+        && model
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
 }
 
 fn validate_providers(
@@ -795,6 +851,96 @@ candidates = [\"echo/echo-1\"]
                 .to_string();
 
             assert!(error.contains(expected), "{settings:?}: {error}");
+        }
+    }
+
+    const GEMINI_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
+
+    fn env_with_gemini_key(name: &str) -> Option<String> {
+        match name {
+            "GEMINI_API_KEY" => Some("AIza_secret_value".to_owned()),
+            _ => env_with_url(name),
+        }
+    }
+
+    #[test]
+    fn gemini_provider_is_loaded_with_its_key() {
+        let text = format!(
+            "{VALID}
+[providers.gemini]
+adapter = \"gemini\"
+base_url = \"{GEMINI_BASE}\"
+api_key_env = \"GEMINI_API_KEY\"
+models = [\"gemini-3.8-flash\", \"gemini-3.5-flash-lite\"]
+"
+        );
+
+        let config = Config::from_toml(&text, env_with_gemini_key).unwrap();
+
+        let AdapterConfig::Gemini { base_url, api_key } = &config.providers["gemini"].adapter
+        else {
+            panic!("wrong adapter");
+        };
+        assert_eq!(base_url, GEMINI_BASE);
+        assert_eq!(api_key.expose_secret(), "AIza_secret_value");
+        assert!(!format!("{config:?}").contains("AIza_secret_value"));
+    }
+
+    #[test]
+    fn bad_gemini_settings_are_reported() {
+        let cases = [
+            (
+                "api_key_env = \"GEMINI_API_KEY\"",
+                "base_url: required for the gemini adapter",
+            ),
+            (
+                &*format!("base_url = \"{GEMINI_BASE}\""),
+                "api_key_env: required for the gemini adapter",
+            ),
+            (
+                &*format!("base_url = \"{GEMINI_BASE}?key=x\"\napi_key_env = \"GEMINI_API_KEY\""),
+                "query or fragment",
+            ),
+        ];
+        for (settings, expected) in cases {
+            let text = with_provider(&format!("adapter = \"gemini\"\n{settings}"));
+
+            let error = Config::from_toml(&text, env_with_gemini_key)
+                .unwrap_err()
+                .to_string();
+
+            assert!(error.contains(expected), "{settings:?}: {error}");
+        }
+    }
+
+    #[test]
+    fn gemini_model_names_must_be_plain() {
+        for model in [
+            "models/gemini-x",
+            "a?b",
+            "a#b",
+            "a b",
+            "../x",
+            "a:generateContent",
+        ] {
+            let text = format!(
+                "{VALID}
+[providers.gemini]
+adapter = \"gemini\"
+base_url = \"{GEMINI_BASE}\"
+api_key_env = \"GEMINI_API_KEY\"
+models = [\"{model}\"]
+"
+            );
+
+            let error = Config::from_toml(&text, env_with_gemini_key)
+                .unwrap_err()
+                .to_string();
+
+            assert!(
+                error.contains("must use only letters, digits"),
+                "{model:?}: {error}"
+            );
         }
     }
 
