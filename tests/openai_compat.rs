@@ -1,21 +1,16 @@
-//! Contract tests for the OpenAI-compatible adapter (Stage 1 slice 4).
-//!
-//! A mock HTTP server runs in-process on a random local port: it records
-//! every request and answers with whatever the test scripts. No network
-//! access or API key is involved.
+//! Contract tests for the OpenAI-compatible adapter (Stage 1 slice 4),
+//! against an in-process mock provider.
 
 mod common;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use axum::Router;
-use axum::body::{Body, Bytes};
-use axum::extract::State;
-use axum::http::{HeaderMap, Method, Request, StatusCode, Uri, header};
-use axum::response::{IntoResponse, Response};
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode};
 use secrecy::SecretString;
 use serde_json::{Value, json};
 
+use common::mock_http::{Mock, closed_port};
 use common::{DbMode, FakeDatabase, FakeKeyStore, send, state_with_keys};
 use modelswitch::build_router;
 use modelswitch::config::Config;
@@ -23,93 +18,10 @@ use modelswitch::domain::{GenerateRequest, Provider, ProviderError, UsageSource}
 use modelswitch::providers::Registry;
 use modelswitch::providers::openai_compat::OpenAiCompatible;
 
-#[derive(Debug, Clone)]
-struct Received {
-    method: Method,
-    path: String,
-    headers: HeaderMap,
-    body: Bytes,
-}
-
-impl Received {
-    fn json(&self) -> Value {
-        serde_json::from_slice(&self.body).unwrap()
-    }
-}
-
-/// What the mock answers with.
-#[derive(Clone)]
-struct Reply {
-    status: StatusCode,
-    headers: Vec<(String, String)>,
-    body: String,
-}
-
-#[derive(Clone)]
-struct Mock {
-    received: Arc<Mutex<Vec<Received>>>,
-    reply: Arc<Mutex<Reply>>,
-}
-
-impl Mock {
-    /// Starts a server answering every request with `status` and `body`;
-    /// returns its base URL (`http://127.0.0.1:<port>/v1`).
-    async fn start(status: StatusCode, body: impl Into<String>) -> (Self, String) {
-        let mock = Self {
-            received: Arc::default(),
-            reply: Arc::new(Mutex::new(Reply {
-                status,
-                headers: Vec::new(),
-                body: body.into(),
-            })),
-        };
-        let app = Router::new().fallback(handle).with_state(mock.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        (mock, format!("http://{address}/v1"))
-    }
-
-    fn with_header(&self, name: &str, value: &str) {
-        self.reply
-            .lock()
-            .unwrap()
-            .headers
-            .push((name.to_owned(), value.to_owned()));
-    }
-
-    fn received(&self) -> Vec<Received> {
-        self.received.lock().unwrap().clone()
-    }
-}
-
-async fn handle(
-    State(mock): State<Mock>,
-    method: Method,
-    uri: Uri,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    mock.received.lock().unwrap().push(Received {
-        method,
-        path: uri.path().to_owned(),
-        headers,
-        body,
-    });
-    let reply = mock.reply.lock().unwrap().clone();
-    let mut response = (
-        reply.status,
-        [(header::CONTENT_TYPE, "application/json")],
-        reply.body,
-    )
-        .into_response();
-    for (name, value) in reply.headers {
-        response.headers_mut().insert(
-            name.parse::<header::HeaderName>().unwrap(),
-            value.parse().unwrap(),
-        );
-    }
-    response
+/// Starts a mock provider; returns it with its API root (`.../v1`).
+async fn start(status: StatusCode, body: impl Into<String>) -> (Mock, String) {
+    let (mock, root) = Mock::start(status, body).await;
+    (mock, format!("{root}/v1"))
 }
 
 fn completion(content: Value, usage: Option<Value>) -> String {
@@ -137,7 +49,7 @@ fn adapter(base_url: &str, key: Option<&str>) -> OpenAiCompatible {
 
 #[tokio::test]
 async fn sends_one_user_message_to_chat_completions_with_bearer_key() {
-    let (mock, base) = Mock::start(StatusCode::OK, completion(json!("hi"), None)).await;
+    let (mock, base) = start(StatusCode::OK, completion(json!("hi"), None)).await;
 
     adapter(&base, Some("gsk_test_key"))
         .generate("llama-3.1-8b-instant", &request("Hello", Some(50)))
@@ -148,7 +60,7 @@ async fn sends_one_user_message_to_chat_completions_with_bearer_key() {
     assert_eq!(received.len(), 1);
     let call = &received[0];
     assert_eq!(call.method, Method::POST);
-    assert_eq!(call.path, "/v1/chat/completions");
+    assert_eq!(call.path(), "/v1/chat/completions");
     assert_eq!(call.headers["authorization"], "Bearer gsk_test_key");
     assert!(
         call.headers["content-type"]
@@ -169,7 +81,7 @@ async fn sends_one_user_message_to_chat_completions_with_bearer_key() {
 
 #[tokio::test]
 async fn omits_authorization_and_max_tokens_when_not_given() {
-    let (mock, base) = Mock::start(StatusCode::OK, completion(json!("hi"), None)).await;
+    let (mock, base) = start(StatusCode::OK, completion(json!("hi"), None)).await;
 
     adapter(&format!("{base}/"), None)
         .generate("llama3.2", &request("Hello", None))
@@ -177,7 +89,11 @@ async fn omits_authorization_and_max_tokens_when_not_given() {
         .unwrap();
 
     let call = &mock.received()[0];
-    assert_eq!(call.path, "/v1/chat/completions", "trailing slash handled");
+    assert_eq!(
+        call.path(),
+        "/v1/chat/completions",
+        "trailing slash handled"
+    );
     assert!(call.headers.get("authorization").is_none());
     assert!(call.json().get("max_tokens").is_none());
 }
@@ -185,7 +101,7 @@ async fn omits_authorization_and_max_tokens_when_not_given() {
 #[tokio::test]
 async fn parses_output_and_reported_usage() {
     let usage = json!({ "prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13 });
-    let (_, base) = Mock::start(StatusCode::OK, completion(json!("Hi there"), Some(usage))).await;
+    let (_, base) = start(StatusCode::OK, completion(json!("Hi there"), Some(usage))).await;
 
     let generation = adapter(&base, None)
         .generate("m", &request("Hello", None))
@@ -201,7 +117,7 @@ async fn parses_output_and_reported_usage() {
 
 #[tokio::test]
 async fn missing_usage_stays_unavailable() {
-    let (_, base) = Mock::start(StatusCode::OK, completion(json!("Hi"), None)).await;
+    let (_, base) = start(StatusCode::OK, completion(json!("Hi"), None)).await;
 
     let generation = adapter(&base, None)
         .generate("m", &request("Hello", None))
@@ -218,7 +134,7 @@ async fn error_status_keeps_code_but_never_message() {
         "type": "tokens",
         "code": "rate_limit_exceeded"
     }});
-    let (_, base) = Mock::start(StatusCode::TOO_MANY_REQUESTS, body.to_string()).await;
+    let (_, base) = start(StatusCode::TOO_MANY_REQUESTS, body.to_string()).await;
 
     let error = adapter(&base, None)
         .generate("m", &request("PROMPT-CANARY", None))
@@ -243,7 +159,7 @@ async fn unusable_success_bodies_are_invalid_responses() {
         completion(json!(null), None),
         json!({ "unexpected": true }).to_string(),
     ] {
-        let (_, base) = Mock::start(StatusCode::OK, body.clone()).await;
+        let (_, base) = start(StatusCode::OK, body.clone()).await;
 
         let error = adapter(&base, None)
             .generate("m", &request("Hello", None))
@@ -260,7 +176,7 @@ async fn unusable_success_bodies_are_invalid_responses() {
 #[tokio::test]
 async fn oversized_response_is_rejected() {
     let huge = completion(json!("x".repeat(5 * 1024 * 1024)), None);
-    let (_, base) = Mock::start(StatusCode::OK, huge).await;
+    let (_, base) = start(StatusCode::OK, huge).await;
 
     let error = adapter(&base, None)
         .generate("m", &request("Hello", None))
@@ -275,9 +191,8 @@ async fn oversized_response_is_rejected() {
 
 #[tokio::test]
 async fn redirects_are_not_followed() {
-    let (elsewhere, elsewhere_base) =
-        Mock::start(StatusCode::OK, completion(json!("hi"), None)).await;
-    let (redirector, base) = Mock::start(StatusCode::TEMPORARY_REDIRECT, "").await;
+    let (elsewhere, elsewhere_base) = start(StatusCode::OK, completion(json!("hi"), None)).await;
+    let (redirector, base) = start(StatusCode::TEMPORARY_REDIRECT, "").await;
     redirector.with_header("location", &format!("{elsewhere_base}/chat/completions"));
 
     let error = adapter(&base, Some("gsk_test_key"))
@@ -294,11 +209,7 @@ async fn redirects_are_not_followed() {
 
 #[tokio::test]
 async fn connection_failure_is_a_request_error() {
-    // Bind then drop a listener, so the port is (almost certainly) closed.
-    let port = {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        listener.local_addr().unwrap().port()
-    };
+    let port = closed_port().await;
 
     let error = adapter(&format!("http://127.0.0.1:{port}/v1"), None)
         .generate("m", &request("Hello", None))
@@ -313,8 +224,7 @@ async fn connection_failure_is_a_request_error() {
 #[tokio::test]
 async fn generate_end_to_end_through_configured_provider() {
     let usage = json!({ "prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7 });
-    let (mock, base) =
-        Mock::start(StatusCode::OK, completion(json!("Hello back"), Some(usage))).await;
+    let (mock, base) = start(StatusCode::OK, completion(json!("Hello back"), Some(usage))).await;
     let config = Config::from_toml(
         &format!(
             r#"

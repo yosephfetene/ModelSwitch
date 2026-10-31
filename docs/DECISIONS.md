@@ -463,3 +463,42 @@ text over the network, or written to logs through a URL. Error logs
 keep enough to classify failures (status and code, which Stage 2 needs
 for retry decisions) without prompt content. A provider that relies on
 redirects will fail visibly with its 3xx status.
+
+## ADR-026 --- Gemini adapter: key, model names, thinking, and refusals
+
+**Status:** Accepted.
+
+**Context:** The second adapter speaks Google's `generateContent`
+format, which differs from the OpenAI one in ways that touch security
+and accounting: the model name is part of the URL, Google accepts the
+key in the query string, thinking models report reasoning separately
+from the answer, and Google can refuse to answer at all.
+
+**Decision:** The Gemini adapter calls
+`POST {base_url}/models/{model}:generateContent` with one user turn and
+`generationConfig.maxOutputTokens` when a limit is given. The key is
+required and sent only in the `x-goog-api-key` header, never as `?key=`.
+Gemini model names in configuration are limited to 1-128 of
+`A-Z a-z 0-9 . - _`, and the adapter also percent-encodes the name as
+one path segment. Parts marked `thought` are left out of the output.
+Output tokens are `candidatesTokenCount + thoughtsTokenCount`, both as
+reported (one missing half counts as zero, since Google omits zero
+counts; both missing stays unknown); this matches how Google bills and
+how OpenAI-compatible providers report `completion_tokens`. A response
+with no candidates and a `promptFeedback.blockReason`, or a candidate
+with no answer text and a finish reason other than `STOP` or
+`MAX_TOKENS`, becomes `ProviderError::Blocked` with Google's reason code
+(kept only if it looks like an identifier). Running out of tokens before
+any answer text is an empty answer with its usage, not a failure. On an
+error status the code is `error.code` when it is a string, else
+`error.status`. The redirect policy, size cap, and error-text rules of
+ADR-025 move to a shared HTTP module used by both adapters, which also
+strips the URL from transport errors.
+
+**Consequences:** A Gemini key cannot reach logs through a URL, and a
+model name cannot redirect the call to another endpoint. Usage for
+thinking models is comparable across providers. Refusals are
+distinguishable in logs and, from Stage 2, in retry decisions; clients
+still see the generic `provider_error` (502), since the reason belongs
+to the logs (ADR-019). Free-tier Gemini traffic may be used by Google,
+so only test data is sent to it (ADR-008).

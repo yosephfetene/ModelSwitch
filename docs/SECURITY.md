@@ -43,6 +43,10 @@
     localhost), redirects are never followed, provider responses are
     capped at 4 MiB, and provider error messages are discarded in favor
     of their short error code (ADR-025).
+-   Provider keys are sent only in headers, never in URLs, and transport
+    errors are logged without the URL. Model names that go into a URL
+    path (Gemini) are restricted to plain identifiers and percent-encoded
+    (ADR-026).
 
 ## Secret handling
 

@@ -1,6 +1,8 @@
 //! Provider adapters and the registry of configured providers.
 
 pub mod echo;
+pub mod gemini;
+mod http;
 pub mod openai_compat;
 
 use std::collections::HashMap;
@@ -45,15 +47,19 @@ impl Registry {
     ) -> Result<Self, BuildError> {
         let mut slots = HashMap::new();
         for (name, config) in providers {
+            let failed = |reason: String| BuildError {
+                name: name.clone(),
+                reason,
+            };
             let provider: Arc<dyn Provider> = match &config.adapter {
                 AdapterConfig::Echo => Arc::new(echo::EchoProvider),
                 AdapterConfig::OpenaiCompatible { base_url, api_key } => Arc::new(
-                    openai_compat::OpenAiCompatible::new(base_url, api_key.clone()).map_err(
-                        |error| BuildError {
-                            name: name.clone(),
-                            reason: error.to_string(),
-                        },
-                    )?,
+                    openai_compat::OpenAiCompatible::new(base_url, api_key.clone())
+                        .map_err(|error| failed(error.to_string()))?,
+                ),
+                AdapterConfig::Gemini { base_url, api_key } => Arc::new(
+                    gemini::Gemini::new(base_url, api_key.clone())
+                        .map_err(|error| failed(error.to_string()))?,
                 ),
             };
             let slot = ProviderSlot {

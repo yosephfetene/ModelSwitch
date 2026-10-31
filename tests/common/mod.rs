@@ -3,6 +3,8 @@
 // Each test file is its own crate and uses a different subset of these.
 #![allow(dead_code)]
 
+pub mod mock_http;
+
 use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
