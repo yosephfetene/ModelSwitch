@@ -11,6 +11,7 @@ use tower::ServiceExt;
 
 use modelswitch::storage::PgDatabaseCheck;
 use modelswitch::storage::api_keys::PgKeyStore;
+use modelswitch::storage::request_records::PgRecordStore;
 use modelswitch::{AppState, build_router};
 
 // 3
@@ -19,8 +20,10 @@ async fn ready_returns_ok_when_database_reachable(pool: PgPool) {
     let app = build_router(AppState {
         db: Arc::new(PgDatabaseCheck::new(pool.clone())),
         db_check_timeout: Duration::from_secs(1),
-        keys: Arc::new(PgKeyStore::new(pool)),
+        keys: Arc::new(PgKeyStore::new(pool.clone())),
         auth_timeout: Duration::from_secs(1),
+        records: Arc::new(PgRecordStore::new(pool)),
+        accounting_timeout: Duration::from_secs(1),
         catalog: Default::default(),
         providers: Default::default(),
     });

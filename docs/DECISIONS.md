@@ -502,3 +502,36 @@ distinguishable in logs and, from Stage 2, in retry decisions; clients
 still see the generic `provider_error` (502), since the reason belongs
 to the logs (ADR-019). Free-tier Gemini traffic may be used by Google,
 so only test data is sent to it (ADR-008).
+
+## ADR-027 --- Request records: what, when, and under which deadline
+
+**Status:** Accepted.
+
+**Context:** ADR-009 fixed what happens when accounting fails, but not
+which requests are recorded, when the write happens, or what a record
+holds. These choices set the cost of every request and what the
+database knows about clients.
+
+**Decision:** Every request that reached a provider gets exactly one
+row in `request_records`: success, provider failure, or timeout.
+Requests rejected before any provider call (401, 400, 413, 422) get
+none: they did no work, and a client with no valid key has no account
+to charge. The row is written before responding, under its own deadline
+(`accounting.database_timeout_ms`, default 1000 ms). If the write fails
+or times out, the client still receives the full response (success or
+error) with `X-ModelSwitch-Accounting: failed`, and an ERROR log
+`accounting_write_failed` carries the request ID. A row holds the
+request and client correlation IDs, the client key, the requested and
+the selected provider and model, the outcome, the failure kind with the
+provider's short code and HTTP status, latency, and the token counts
+exactly as reported; never the prompt or the output. `created_at` is
+the database clock at insert minus the measured latency. The optional
+background retry from ADR-009 and the `accounting_failures_total`
+metric are deferred until metrics exist (Stage 2).
+
+**Consequences:** The extra latency is one indexed insert in the normal
+case and at most the accounting deadline during an outage. A server
+restart cannot lose records that were acknowledged, because nothing is
+queued in memory. If a client disconnects while the provider is still
+working, the request is cancelled and no row is written; recording
+abandoned work is left to the Stage 2 executor, which owns attempts.

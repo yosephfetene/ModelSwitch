@@ -4,6 +4,7 @@
 //! `tests/` can build it in-process; `main.rs` only wires it to the
 //! outside world (ADR-017).
 
+pub mod accounting;
 pub mod api;
 pub mod app;
 pub mod auth;

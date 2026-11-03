@@ -24,24 +24,30 @@ high-entropy (ADR-012).
 
 ## `request_records`
 
--   `id` --- gateway request ID (time-sortable, `req_` prefix)
+Implemented in `migrations/` (Stage 1, ADR-027). One row per request
+that reached a provider; requests rejected before that get none.
+
+-   `id` --- gateway request ID (`req_` + UUIDv7, time-sortable)
 -   `client_request_id` --- nullable, validated client correlation ID
--   `client_api_key_id`
+-   `client_api_key_id` --- references `client_api_keys`
 -   `requested_model` --- alias or `provider/model` pin as sent
 -   `selected_provider`, `selected_model` --- what actually ran
--   `routing_policy_version`, `routing_reason`
--   `status` --- succeeded, failed, timed_out, rejected
--   `error_code` --- nullable
+-   `status` --- succeeded, failed, timed_out
+-   `error_kind` --- request, status, invalid_response, blocked; set
+    only when failed
+-   `error_code` --- nullable provider short code (for example
+    `rate_limit_exceeded`, `SAFETY`), never a message
+-   `provider_status` --- nullable provider HTTP status
 -   `latency_ms`
 -   `reported_input_tokens`, `reported_output_tokens`,
-    `reported_total_tokens` --- nullable provider facts
+    `reported_total_tokens` --- nullable provider facts (bigint)
 -   `usage_source` --- provider_reported, unavailable
--   `estimated_cost`, `pricing_version` --- nullable until pricing
-    exists (Stage 3)
--   `created_at`, `completed_at`
+-   `created_at` (start), `completed_at` (insert time)
+-   Later: `routing_policy_version`, `routing_reason` (with routing
+    policies), `estimated_cost`, `pricing_version` (Stage 3)
 
-Do not store prompts/completions by default. If added later, define
-opt-in, access controls, retention, and deletion behavior.
+Prompts and completions are never stored. If that is ever added, define
+opt-in, access controls, retention, and deletion behavior first.
 
 Missing usage stays null with `usage_source = unavailable`; it is never
 fabricated. Stage 3 adds separate `estimated_input_tokens`,
