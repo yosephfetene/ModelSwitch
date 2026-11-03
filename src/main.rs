@@ -9,6 +9,7 @@ use uuid::Uuid;
 use modelswitch::config::Config;
 use modelswitch::providers::Registry;
 use modelswitch::storage::api_keys::PgKeyStore;
+use modelswitch::storage::request_records::PgRecordStore;
 use modelswitch::storage::{self, PgDatabaseCheck};
 use modelswitch::{AppState, build_router, cli, observability};
 
@@ -107,8 +108,10 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     let state = AppState {
         db: Arc::new(PgDatabaseCheck::new(pool.clone())),
         db_check_timeout: config.health.database_timeout,
-        keys: Arc::new(PgKeyStore::new(pool)),
+        keys: Arc::new(PgKeyStore::new(pool.clone())),
         auth_timeout: config.auth.database_timeout,
+        records: Arc::new(PgRecordStore::new(pool)),
+        accounting_timeout: config.accounting.database_timeout,
         catalog: Arc::new(config.catalog()),
         providers: Arc::new(
             Registry::from_config(&config.providers).context("failed to set up providers")?,

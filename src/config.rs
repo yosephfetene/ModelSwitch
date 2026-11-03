@@ -25,6 +25,7 @@ pub struct Config {
     pub database: DatabaseConfig,
     pub health: HealthConfig,
     pub auth: AuthConfig,
+    pub accounting: AccountingConfig,
     pub log: LogConfig,
     /// Configured providers by name.
     pub providers: BTreeMap<String, ProviderConfig>,
@@ -54,6 +55,12 @@ pub struct HealthConfig {
 #[derive(Debug)]
 pub struct AuthConfig {
     /// Upper bound on the API key lookup for each request.
+    pub database_timeout: Duration,
+}
+
+#[derive(Debug)]
+pub struct AccountingConfig {
+    /// Upper bound on writing each request record (ADR-009, ADR-027).
     pub database_timeout: Duration,
 }
 
@@ -115,6 +122,8 @@ pub struct FileConfig {
     #[serde(default)]
     pub auth: FileAuth,
     #[serde(default)]
+    pub accounting: FileAccounting,
+    #[serde(default)]
     pub log: FileLog,
     #[serde(default)]
     pub providers: BTreeMap<String, FileProvider>,
@@ -160,6 +169,21 @@ pub struct FileAuth {
 }
 
 impl Default for FileAuth {
+    fn default() -> Self {
+        Self {
+            database_timeout_ms: default_database_timeout_ms(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileAccounting {
+    #[serde(default = "default_database_timeout_ms")]
+    pub database_timeout_ms: u64,
+}
+
+impl Default for FileAccounting {
     fn default() -> Self {
         Self {
             database_timeout_ms: default_database_timeout_ms(),
@@ -328,6 +352,14 @@ impl Config {
             ));
         }
 
+        if !DATABASE_TIMEOUT_MS_RANGE.contains(&file.accounting.database_timeout_ms) {
+            problems.push(format!(
+                "accounting.database_timeout_ms: must be between {} and {}",
+                DATABASE_TIMEOUT_MS_RANGE.start(),
+                DATABASE_TIMEOUT_MS_RANGE.end()
+            ));
+        }
+
         let providers = validate_providers(&file.providers, &env, &mut problems);
         let aliases = validate_aliases(&file.aliases, &file.providers, &mut problems);
 
@@ -345,6 +377,9 @@ impl Config {
                 },
                 auth: AuthConfig {
                     database_timeout: Duration::from_millis(file.auth.database_timeout_ms),
+                },
+                accounting: AccountingConfig {
+                    database_timeout: Duration::from_millis(file.accounting.database_timeout_ms),
                 },
                 log: LogConfig {
                     format: file.log.format,
@@ -652,6 +687,10 @@ mod tests {
         assert_eq!(config.database.max_connections, 10);
         assert_eq!(config.health.database_timeout, Duration::from_millis(1_000));
         assert_eq!(config.auth.database_timeout, Duration::from_millis(1_000));
+        assert_eq!(
+            config.accounting.database_timeout,
+            Duration::from_millis(1_000)
+        );
         assert_eq!(config.log.format, LogFormat::Pretty);
     }
 

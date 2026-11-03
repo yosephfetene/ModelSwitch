@@ -22,6 +22,7 @@ use tracing_subscriber::fmt::MakeWriter;
 use secrecy::ExposeSecret;
 use uuid::Uuid;
 
+use modelswitch::accounting::{RecordStore, RecordStoreError, RequestRecord};
 use modelswitch::auth::api_key::{KeyHash, NewApiKey};
 use modelswitch::domain::{GenerateRequest, Generation, Provider, ProviderError, Usage};
 use modelswitch::providers::Registry;
@@ -143,6 +144,8 @@ impl KeyStore for FakeKeyStore {
 pub enum ProviderMode {
     Reply(Generation),
     Fail(String),
+    /// Fails with exactly this error.
+    Error(ProviderError),
     Hang,
 }
 
@@ -189,22 +192,75 @@ impl Provider for FakeProvider {
             match mode {
                 ProviderMode::Reply(generation) => Ok(generation),
                 ProviderMode::Fail(detail) => Err(ProviderError::Request(detail)),
+                ProviderMode::Error(error) => Err(error),
                 ProviderMode::Hang => std::future::pending().await,
             }
         })
     }
 }
 
+/// A record store whose availability the test controls. Keeps every
+/// record written while up.
+#[derive(Clone)]
+pub struct FakeRecordStore {
+    mode: Arc<Mutex<DbMode>>,
+    records: Arc<Mutex<Vec<RequestRecord>>>,
+}
+
+impl FakeRecordStore {
+    pub fn new(mode: DbMode) -> Self {
+        Self {
+            mode: Arc::new(Mutex::new(mode)),
+            records: Arc::default(),
+        }
+    }
+
+    pub fn records(&self) -> Vec<RequestRecord> {
+        self.records.lock().unwrap().clone()
+    }
+}
+
+impl RecordStore for FakeRecordStore {
+    fn insert<'a>(
+        &'a self,
+        record: &'a RequestRecord,
+    ) -> BoxFuture<'a, Result<(), RecordStoreError>> {
+        let mode = *self.mode.lock().unwrap();
+        Box::pin(async move {
+            match mode {
+                DbMode::Up => {
+                    self.records.lock().unwrap().push(record.clone());
+                    Ok(())
+                }
+                DbMode::Down => Err(RecordStoreError(SENSITIVE_ERROR.to_owned())),
+                DbMode::Hang => std::future::pending().await,
+            }
+        })
+    }
+}
+
+pub const ACCOUNTING_TIMEOUT: Duration = Duration::from_secs(1);
+
 pub fn state(db: FakeDatabase) -> AppState {
     state_with_keys(db, FakeKeyStore::new(DbMode::Up))
 }
 
 pub fn state_with_keys(db: FakeDatabase, keys: FakeKeyStore) -> AppState {
+    state_with_records(db, keys, FakeRecordStore::new(DbMode::Up))
+}
+
+pub fn state_with_records(
+    db: FakeDatabase,
+    keys: FakeKeyStore,
+    records: FakeRecordStore,
+) -> AppState {
     AppState {
         db: Arc::new(db),
         db_check_timeout: DB_CHECK_TIMEOUT,
         keys: Arc::new(keys),
         auth_timeout: AUTH_TIMEOUT,
+        records: Arc::new(records),
+        accounting_timeout: ACCOUNTING_TIMEOUT,
         catalog: Arc::new(Catalog::default()),
         providers: Arc::new(Registry::default()),
     }

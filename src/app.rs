@@ -8,6 +8,7 @@ use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::trace::{DefaultOnFailure, TraceLayer};
 use tracing::Level;
 
+use crate::accounting::RecordStore;
 use crate::api;
 use crate::api::error::ApiError;
 use crate::providers::Registry;
@@ -27,6 +28,12 @@ pub struct AppState {
     pub keys: Arc<dyn KeyStore>,
     /// Upper bound on how long authentication waits for the key lookup.
     pub auth_timeout: Duration,
+    /// Where request records are written, a trait object for the same
+    /// reason.
+    pub records: Arc<dyn RecordStore>,
+    /// Upper bound on how long a response waits for its record to be
+    /// written (ADR-027).
+    pub accounting_timeout: Duration,
     /// Configured aliases and models, for resolving a request's `model`.
     pub catalog: Arc<Catalog>,
     /// Configured providers, ready to call.

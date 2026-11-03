@@ -126,8 +126,10 @@ Response:
     from every route, including errors; on errors it equals the body's
     `request_id`.
 -   `X-Client-Request-Id` --- echoed when the client sent a valid one.
--   `X-ModelSwitch-Accounting: failed` --- present when generation
-    succeeded but the request record could not be written (ADR-009).
+-   `X-ModelSwitch-Accounting: failed` --- present when the request
+    reached a provider but its request record could not be written
+    within the accounting deadline. The response is otherwise complete:
+    a successful generation is still delivered (ADR-009, ADR-027).
 -   `Content-Type: application/json`.
 
 ### Example error

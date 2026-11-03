@@ -61,8 +61,10 @@
 ## Privacy
 
 Default to metadata, outcomes, timing, and usage rather than
-prompt/completion content. Any later content capture should be opt-in,
-access-controlled, time-limited, and documented.
+prompt/completion content. Request records hold exactly that and never
+the prompt or the output; provider failures are stored as short codes,
+never provider messages (ADR-027). Any later content capture should be
+opt-in, access-controlled, time-limited, and documented.
 
 ## Cost and abuse controls
 

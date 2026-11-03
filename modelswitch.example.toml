@@ -19,6 +19,12 @@ database_timeout_ms = 1000
 # Past this, the request is refused with 503, never let through.
 database_timeout_ms = 1000
 
+[accounting]
+# How long a response waits for its request record to be written
+# (100-10000 ms). Past this, the response is still delivered, marked
+# with the header X-ModelSwitch-Accounting: failed.
+database_timeout_ms = 1000
+
 # Providers by name. `adapter` is the wire format; more adapters arrive
 # with their slices. `timeout_ms` bounds one call (1000-300000, default 30000).
 [providers.echo]
