@@ -535,3 +535,45 @@ restart cannot lose records that were acknowledged, because nothing is
 queued in memory. If a client disconnects while the provider is still
 working, the request is cancelled and no row is written; recording
 abandoned work is left to the Stage 2 executor, which owns attempts.
+
+## ADR-028 --- Retry and fallback policy
+
+**Status:** Accepted.
+
+**Context:** ADR-007 allows aliases to fall back and pins to retry the
+same target, and FR-08 requires retries and fallback to be finite and
+recorded. The executor needs exact rules: which failures are worth
+another try, where, how many, how long, and what the client sees when
+everything fails.
+
+**Decision:** Each failed attempt is classified:
+
+-   *Transient* (connection failure, provider 5xx, unusable response):
+    retry the same target, then fall back to the next candidate.
+-   *Target problem* (timeout, 401, 403, 404, 429, other unexpected
+    statuses): skip to the next candidate. A timeout already used its
+    whole deadline and may have been billed, and a rate limit or a
+    missing model will not change in a moment, but another provider may
+    succeed.
+-   *Request problem* (blocked by a safety filter, other 4xx): stop.
+    Sending a refused prompt to other providers until one accepts it
+    would route around safety filters.
+
+A request makes at most `max_attempts` attempts (default 3) and runs at
+most `request_timeout` in total (default 60 s), whichever ends first.
+Each attempt's deadline is the smaller of its provider's timeout and
+the time remaining. Before retrying the same target the executor waits
+a random 100--300 ms, doubling the range on each further retry of that
+target, never past the deadline; falling back needs no wait. Pins and
+`routing.fallback = false` use the same rules with a one-target list.
+When every attempt fails, the client receives the last attempt's error
+(502 `provider_error` or 504 `upstream_timeout`) and
+`X-ModelSwitch-Attempts: <n>`; provider names and codes go only to logs
+and attempt records (ADR-019).
+
+**Consequences:** Failure handling is bounded in both attempts and time,
+so a fast-failing provider cannot cause a retry storm and a slow one
+cannot hold a client past the request deadline. Jittered backoff keeps
+retries from many clients from arriving as one wave. Fallback can
+change the model that answers; responses already report which one ran
+(ADR-007).
