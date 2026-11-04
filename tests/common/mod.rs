@@ -26,6 +26,7 @@ use modelswitch::accounting::{RecordStore, RecordStoreError, RequestRecord};
 use modelswitch::auth::api_key::{KeyHash, NewApiKey};
 use modelswitch::domain::{GenerateRequest, Generation, Provider, ProviderError, Usage};
 use modelswitch::providers::Registry;
+use modelswitch::reliability::Limits;
 use modelswitch::routing::Catalog;
 use modelswitch::storage::api_keys::{KeyLookup, KeyStore, KeyStoreError};
 use modelswitch::storage::{BoxFuture, DatabaseCheck, PingError};
@@ -251,6 +252,10 @@ impl RecordStore for FakeRecordStore {
 }
 
 pub const ACCOUNTING_TIMEOUT: Duration = Duration::from_secs(1);
+pub const REQUEST_LIMITS: Limits = Limits {
+    max_attempts: 3,
+    request_timeout: Duration::from_secs(60),
+};
 
 pub fn state(db: FakeDatabase) -> AppState {
     state_with_keys(db, FakeKeyStore::new(DbMode::Up))
@@ -272,6 +277,7 @@ pub fn state_with_records(
         auth_timeout: AUTH_TIMEOUT,
         records: Arc::new(records),
         accounting_timeout: ACCOUNTING_TIMEOUT,
+        limits: REQUEST_LIMITS,
         catalog: Arc::new(Catalog::default()),
         providers: Arc::new(Registry::default()),
     }

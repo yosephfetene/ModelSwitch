@@ -16,6 +16,7 @@ use secrecy::SecretString;
 use serde::Deserialize;
 
 use crate::domain::Target;
+use crate::reliability::Limits;
 use crate::routing::Catalog;
 
 /// Validated configuration used by the running service.
@@ -26,6 +27,8 @@ pub struct Config {
     pub health: HealthConfig,
     pub auth: AuthConfig,
     pub accounting: AccountingConfig,
+    /// How far each request may go (ADR-028).
+    pub reliability: Limits,
     pub log: LogConfig,
     /// Configured providers by name.
     pub providers: BTreeMap<String, ProviderConfig>,
@@ -124,6 +127,8 @@ pub struct FileConfig {
     #[serde(default)]
     pub accounting: FileAccounting,
     #[serde(default)]
+    pub reliability: FileReliability,
+    #[serde(default)]
     pub log: FileLog,
     #[serde(default)]
     pub providers: BTreeMap<String, FileProvider>,
@@ -193,6 +198,32 @@ impl Default for FileAccounting {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct FileReliability {
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: usize,
+    #[serde(default = "default_request_timeout_ms")]
+    pub request_timeout_ms: u64,
+}
+
+impl Default for FileReliability {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_max_attempts(),
+            request_timeout_ms: default_request_timeout_ms(),
+        }
+    }
+}
+
+fn default_max_attempts() -> usize {
+    3
+}
+
+fn default_request_timeout_ms() -> u64 {
+    60_000
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileLog {
     #[serde(default = "default_log_format")]
     pub format: LogFormat,
@@ -244,6 +275,8 @@ fn default_log_format() -> LogFormat {
 
 const MAX_CONNECTIONS_RANGE: std::ops::RangeInclusive<u32> = 1..=100;
 const DATABASE_TIMEOUT_MS_RANGE: std::ops::RangeInclusive<u64> = 100..=10_000;
+const MAX_ATTEMPTS_RANGE: std::ops::RangeInclusive<usize> = 1..=10;
+const REQUEST_TIMEOUT_MS_RANGE: std::ops::RangeInclusive<u64> = 1_000..=300_000;
 const PROVIDER_TIMEOUT_MS_RANGE: std::ops::RangeInclusive<u64> = 1_000..=300_000;
 
 #[derive(Debug, thiserror::Error)]
@@ -360,6 +393,22 @@ impl Config {
             ));
         }
 
+        if !MAX_ATTEMPTS_RANGE.contains(&file.reliability.max_attempts) {
+            problems.push(format!(
+                "reliability.max_attempts: must be between {} and {}",
+                MAX_ATTEMPTS_RANGE.start(),
+                MAX_ATTEMPTS_RANGE.end()
+            ));
+        }
+
+        if !REQUEST_TIMEOUT_MS_RANGE.contains(&file.reliability.request_timeout_ms) {
+            problems.push(format!(
+                "reliability.request_timeout_ms: must be between {} and {}",
+                REQUEST_TIMEOUT_MS_RANGE.start(),
+                REQUEST_TIMEOUT_MS_RANGE.end()
+            ));
+        }
+
         let providers = validate_providers(&file.providers, &env, &mut problems);
         let aliases = validate_aliases(&file.aliases, &file.providers, &mut problems);
 
@@ -380,6 +429,10 @@ impl Config {
                 },
                 accounting: AccountingConfig {
                     database_timeout: Duration::from_millis(file.accounting.database_timeout_ms),
+                },
+                reliability: Limits {
+                    max_attempts: file.reliability.max_attempts,
+                    request_timeout: Duration::from_millis(file.reliability.request_timeout_ms),
                 },
                 log: LogConfig {
                     format: file.log.format,
@@ -691,6 +744,8 @@ mod tests {
             config.accounting.database_timeout,
             Duration::from_millis(1_000)
         );
+        assert_eq!(config.reliability.max_attempts, 3);
+        assert_eq!(config.reliability.request_timeout, Duration::from_secs(60));
         assert_eq!(config.log.format, LogFormat::Pretty);
     }
 
@@ -721,6 +776,22 @@ mod tests {
         assert!(error.contains("DATABASE_URL"), "{error}");
         assert!(error.contains("database.max_connections"), "{error}");
         assert!(error.contains("health.database_timeout_ms"), "{error}");
+    }
+
+    #[test]
+    fn reliability_limits_are_loaded_and_checked() {
+        let good =
+            format!("{VALID}\n[reliability]\nmax_attempts = 5\nrequest_timeout_ms = 20000\n");
+        let config = Config::from_toml(&good, env_with_url).unwrap();
+        assert_eq!(config.reliability.max_attempts, 5);
+        assert_eq!(config.reliability.request_timeout, Duration::from_secs(20));
+
+        let bad = format!("{VALID}\n[reliability]\nmax_attempts = 0\nrequest_timeout_ms = 5\n");
+        let error = Config::from_toml(&bad, env_with_url)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("reliability.max_attempts"), "{error}");
+        assert!(error.contains("reliability.request_timeout_ms"), "{error}");
     }
 
     #[test]

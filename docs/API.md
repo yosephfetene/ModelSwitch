@@ -49,8 +49,10 @@ later. Revocation takes effect on the next request (ADR-023).
     yet accepted.
 -   The body must be `application/json`, at most 1 MiB, with no fields
     beyond these; anything else is rejected before routing.
--   Until the reliability executor (Stage 2), only the first eligible
-    candidate is called; a failure is returned rather than retried.
+-   Failed attempts are retried and fall back down an alias's candidates
+    within the configured limits (ADR-028). `provider` and
+    `resolved_model` report what actually answered, which can differ
+    from the first candidate.
 -   The built-in `echo` provider returns the input unchanged and
     reports no usage, so the gateway can be tried without provider
     credentials (ADR-024).
@@ -126,6 +128,10 @@ Response:
     from every route, including errors; on errors it equals the body's
     `request_id`.
 -   `X-Client-Request-Id` --- echoed when the client sent a valid one.
+-   `X-ModelSwitch-Attempts` --- how many provider attempts the request
+    took, on every response that reached a provider. When all attempts
+    fail, the response is the last attempt's error; which providers were
+    tried and why they failed stay in logs and records (ADR-028).
 -   `X-ModelSwitch-Accounting: failed` --- present when the request
     reached a provider but its request record could not be written
     within the accounting deadline. The response is otherwise complete:

@@ -12,6 +12,7 @@ use crate::accounting::RecordStore;
 use crate::api;
 use crate::api::error::ApiError;
 use crate::providers::Registry;
+use crate::reliability::Limits;
 use crate::routing::Catalog;
 use crate::storage::DatabaseCheck;
 use crate::storage::api_keys::KeyStore;
@@ -34,6 +35,8 @@ pub struct AppState {
     /// Upper bound on how long a response waits for its record to be
     /// written (ADR-027).
     pub accounting_timeout: Duration,
+    /// How far each request may go across retries and fallback.
+    pub limits: Limits,
     /// Configured aliases and models, for resolving a request's `model`.
     pub catalog: Arc<Catalog>,
     /// Configured providers, ready to call.

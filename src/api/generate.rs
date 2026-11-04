@@ -2,8 +2,9 @@
 //!
 //! Order of work, cheapest and safest first: authentication (route
 //! layer), then body size, content type, and JSON validation, then model
-//! resolution. Only a fully valid request reaches a provider, and every
-//! provider call runs under that provider's deadline.
+//! resolution. Only a fully valid request reaches a provider. The
+//! executor then tries the candidates, with retries and fallback, within
+//! the attempt and time limits (ADR-028).
 //!
 //! Every request that reaches a provider gets a request record, written
 //! under its own deadline before responding (ADR-027).
@@ -31,10 +32,14 @@ use crate::api::error::ApiError;
 use crate::api::request_context::{ClientRequestId, RequestId};
 use crate::app::AppState;
 use crate::domain::{GenerateRequest, Generation, Usage, UsageSource};
+use crate::reliability::{Attempt, AttemptFailure, Execution, execute};
 
 /// Set to `failed` when the request record could not be written
 /// (ADR-009).
 pub const ACCOUNTING_HEADER: HeaderName = HeaderName::from_static("x-modelswitch-accounting");
+
+/// How many provider attempts the request took (ADR-028).
+pub const ATTEMPTS_HEADER: HeaderName = HeaderName::from_static("x-modelswitch-attempts");
 
 /// Largest accepted request body.
 pub const MAX_BODY_BYTES: usize = 1024 * 1024;
@@ -116,13 +121,15 @@ async fn generate(
             return ApiError::UnknownModel.into_response();
         }
     };
-    // Trying further candidates after a failure is the reliability
-    // executor's job (Stage 2); for now only the first is called.
-    let target = &targets[0];
-    let Some(slot) = state.providers.get(&target.provider) else {
+    // Configuration guarantees every candidate has a provider, so a gap
+    // is a wiring bug, not something to retry around.
+    let unregistered = targets
+        .iter()
+        .find(|target| state.providers.get(&target.provider).is_none());
+    if let Some(target) = unregistered {
         tracing::error!(provider = %target.provider, "generate: resolved provider is not registered");
         return ApiError::Internal.into_response();
-    };
+    }
     // Set by the route's auth layer; its absence is a wiring bug.
     let Some(Extension(key)) = key else {
         tracing::error!("generate: no authenticated key on the request");
@@ -133,10 +140,25 @@ async fn generate(
         input: body.input,
         max_output_tokens: body.max_output_tokens,
     };
-    let call = slot.provider.generate(&target.model, &request);
-    let result = tokio::time::timeout(slot.timeout, call).await;
+    let Execution {
+        attempts,
+        generation,
+    } = execute(&targets, &state.providers, &request, state.limits).await;
     let latency_ms = started.elapsed().as_millis() as u64;
+    log_failed_attempts(&attempts);
 
+    // The last attempt is what ran in the end: the one that answered, or
+    // the failure to report.
+    let Some(last) = attempts.last() else {
+        tracing::error!("generate: the executor made no attempt");
+        return ApiError::Internal.into_response();
+    };
+    let target = &last.target;
+    let (outcome, failure) = match &last.failure {
+        None => (Outcome::Succeeded, Failure::default()),
+        Some(AttemptFailure::Provider(error)) => (Outcome::Failed, Failure::from_error(error)),
+        Some(AttemptFailure::TimedOut) => (Outcome::TimedOut, Failure::default()),
+    };
     let mut record = RequestRecord {
         request_id: request_id.as_str().to_owned(),
         client_request_id: client_request_id.map(|Extension(id)| id.as_str().to_owned()),
@@ -144,14 +166,14 @@ async fn generate(
         requested_model: body.model.clone(),
         provider: target.provider.clone(),
         model: target.model.clone(),
-        outcome: Outcome::Succeeded,
-        failure: Failure::default(),
+        outcome,
+        failure,
         latency_ms,
         usage: Usage::unavailable(),
     };
-    let reply = match result {
-        Ok(Ok(Generation { output, usage })) => {
-            tracing::info!(%target, latency_ms, "generate: succeeded");
+    let reply = match generation {
+        Some(Generation { output, usage }) => {
+            tracing::info!(%target, latency_ms, attempts = attempts.len(), "generate: succeeded");
             record.usage = usage;
             Ok(GenerateResponse {
                 id: request_id.as_str().to_owned(),
@@ -171,21 +193,8 @@ async fn generate(
                 latency_ms,
             })
         }
-        Ok(Err(error)) => {
-            tracing::warn!(%target, %error, "generate: provider failed");
-            record.outcome = Outcome::Failed;
-            record.failure = Failure::from_error(&error);
-            Err(ApiError::ProviderError)
-        }
-        Err(_) => {
-            tracing::warn!(
-                %target,
-                timeout_ms = slot.timeout.as_millis() as u64,
-                "generate: provider timed out"
-            );
-            record.outcome = Outcome::TimedOut;
-            Err(ApiError::UpstreamTimeout)
-        }
+        None if outcome == Outcome::TimedOut => Err(ApiError::UpstreamTimeout),
+        None => Err(ApiError::ProviderError),
     };
 
     // The record is written before responding, so the response can say
@@ -195,12 +204,32 @@ async fn generate(
         Ok(reply) => Json(reply).into_response(),
         Err(error) => error.into_response(),
     };
+    response
+        .headers_mut()
+        .insert(ATTEMPTS_HEADER, HeaderValue::from(attempts.len()));
     if !recorded {
         response
             .headers_mut()
             .insert(ACCOUNTING_HEADER, HeaderValue::from_static("failed"));
     }
     response
+}
+
+/// One line per failed attempt. Provider names and codes stop here and in
+/// the records: clients see only the final error (ADR-028).
+fn log_failed_attempts(attempts: &[Attempt]) {
+    for attempt in attempts {
+        let target = &attempt.target;
+        match &attempt.failure {
+            Some(AttemptFailure::Provider(error)) => {
+                tracing::warn!(%target, %error, "generate: provider failed");
+            }
+            Some(AttemptFailure::TimedOut) => {
+                tracing::warn!(%target, "generate: provider timed out");
+            }
+            None => {}
+        }
+    }
 }
 
 /// Writes the record under the accounting deadline. A failure is logged
