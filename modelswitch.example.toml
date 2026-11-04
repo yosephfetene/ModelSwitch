@@ -31,6 +31,12 @@ max_attempts = 3
 # Total time for a request, across all attempts (1000-300000 ms).
 request_timeout_ms = 60000
 
+[metrics]
+# Internal address for GET /metrics (Prometheus text format). It needs no
+# API key, so keep it off the public network. Remove this section to open
+# no second port. Must differ from server.bind.
+bind = "127.0.0.1:9090"
+
 # Providers by name. `adapter` is the wire format; more adapters arrive
 # with their slices. `timeout_ms` bounds one call (1000-300000, default 30000).
 [providers.echo]

@@ -29,6 +29,7 @@ pub struct Config {
     pub accounting: AccountingConfig,
     /// How far each request may go (ADR-028).
     pub reliability: Limits,
+    pub metrics: MetricsConfig,
     pub log: LogConfig,
     /// Configured providers by name.
     pub providers: BTreeMap<String, ProviderConfig>,
@@ -59,6 +60,13 @@ pub struct HealthConfig {
 pub struct AuthConfig {
     /// Upper bound on the API key lookup for each request.
     pub database_timeout: Duration,
+}
+
+#[derive(Debug)]
+pub struct MetricsConfig {
+    /// Internal address for `GET /metrics` (ADR-030). `None` opens no
+    /// listener.
+    pub bind: Option<SocketAddr>,
 }
 
 #[derive(Debug)]
@@ -128,6 +136,8 @@ pub struct FileConfig {
     pub accounting: FileAccounting,
     #[serde(default)]
     pub reliability: FileReliability,
+    #[serde(default)]
+    pub metrics: FileMetrics,
     #[serde(default)]
     pub log: FileLog,
     #[serde(default)]
@@ -212,6 +222,12 @@ impl Default for FileReliability {
             request_timeout_ms: default_request_timeout_ms(),
         }
     }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileMetrics {
+    pub bind: Option<SocketAddr>,
 }
 
 fn default_max_attempts() -> usize {
@@ -393,6 +409,13 @@ impl Config {
             ));
         }
 
+        if file.metrics.bind == Some(file.server.bind) {
+            problems.push(
+                "metrics.bind: must differ from server.bind, or the public port would expose it"
+                    .to_owned(),
+            );
+        }
+
         if !MAX_ATTEMPTS_RANGE.contains(&file.reliability.max_attempts) {
             problems.push(format!(
                 "reliability.max_attempts: must be between {} and {}",
@@ -433,6 +456,9 @@ impl Config {
                 reliability: Limits {
                     max_attempts: file.reliability.max_attempts,
                     request_timeout: Duration::from_millis(file.reliability.request_timeout_ms),
+                },
+                metrics: MetricsConfig {
+                    bind: file.metrics.bind,
                 },
                 log: LogConfig {
                     format: file.log.format,
@@ -792,6 +818,27 @@ mod tests {
             .to_string();
         assert!(error.contains("reliability.max_attempts"), "{error}");
         assert!(error.contains("reliability.request_timeout_ms"), "{error}");
+    }
+
+    #[test]
+    fn metrics_listener_is_off_unless_configured() {
+        let config = Config::from_toml(VALID, env_with_url).unwrap();
+        assert_eq!(config.metrics.bind, None);
+
+        let on = format!("{VALID}\n[metrics]\nbind = \"127.0.0.1:9090\"\n");
+        let config = Config::from_toml(&on, env_with_url).unwrap();
+        assert_eq!(config.metrics.bind, Some("127.0.0.1:9090".parse().unwrap()));
+    }
+
+    #[test]
+    fn metrics_cannot_share_the_public_address() {
+        let text = format!("{VALID}\n[metrics]\nbind = \"127.0.0.1:8080\"\n");
+
+        let error = Config::from_toml(&text, env_with_url)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("metrics.bind"), "{error}");
     }
 
     #[test]

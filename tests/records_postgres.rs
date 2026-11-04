@@ -54,6 +54,7 @@ async fn generate_writes_a_row(pool: PgPool) {
         records: Arc::new(PgRecordStore::new(pool.clone())),
         accounting_timeout: ACCOUNTING_TIMEOUT,
         limits: REQUEST_LIMITS,
+        metrics: Default::default(),
         catalog: Arc::new(Catalog::new(
             [("echo".to_owned(), vec!["echo-1".to_owned()])],
             [(

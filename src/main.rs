@@ -11,7 +11,7 @@ use modelswitch::providers::Registry;
 use modelswitch::storage::api_keys::PgKeyStore;
 use modelswitch::storage::request_records::PgRecordStore;
 use modelswitch::storage::{self, PgDatabaseCheck};
-use modelswitch::{AppState, build_router, cli, observability};
+use modelswitch::{AppState, build_metrics_router, build_router, cli, observability};
 
 #[derive(Parser)]
 #[command(version, about = "Multi-provider LLM inference gateway")]
@@ -113,11 +113,27 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         records: Arc::new(PgRecordStore::new(pool)),
         accounting_timeout: config.accounting.database_timeout,
         limits: config.reliability,
+        metrics: Arc::default(),
         catalog: Arc::new(config.catalog()),
         providers: Arc::new(
             Registry::from_config(&config.providers).context("failed to set up providers")?,
         ),
     };
+
+    // Bound before serving, so a port clash stops startup instead of
+    // leaving the service running unmonitored.
+    if let Some(address) = config.metrics.bind {
+        let listener = tokio::net::TcpListener::bind(address)
+            .await
+            .with_context(|| format!("failed to bind metrics address {address}"))?;
+        tracing::info!(%address, "metrics listening");
+        let app = build_metrics_router(Arc::clone(&state.metrics));
+        tokio::spawn(async move {
+            if let Err(error) = axum::serve(listener, app).await {
+                tracing::error!(%error, "metrics listener stopped");
+            }
+        });
+    }
 
     let listener = tokio::net::TcpListener::bind(config.server.bind)
         .await

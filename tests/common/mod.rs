@@ -278,6 +278,7 @@ pub fn state_with_records(
         records: Arc::new(records),
         accounting_timeout: ACCOUNTING_TIMEOUT,
         limits: REQUEST_LIMITS,
+        metrics: Arc::default(),
         catalog: Arc::new(Catalog::default()),
         providers: Arc::new(Registry::default()),
     }

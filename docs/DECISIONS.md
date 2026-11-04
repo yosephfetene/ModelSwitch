@@ -607,3 +607,31 @@ from the following attempt, so the executor does not track it.
 reverse, at the cost of a few more inserts per request. Token counts
 stay on the request: providers report none for a failed call, so usage
 spent on failed attempts remains unknown (ADR-010).
+
+## ADR-030 --- Metrics on a separate internal listener
+
+**Status:** Accepted.
+
+**Context:** ADR-009 requires an `accounting_failures_total` metric, and
+operators need to see provider health. These totals reveal traffic,
+providers, and failure rates, so they should not be public; but they
+must stay readable when the database, and so API key checks, are down.
+
+**Decision:** `GET /metrics` is served in the Prometheus text format on
+its own listener, `metrics.bind`, never on the public port, and needs no
+API key. Without `[metrics]` no second port is opened; `metrics.bind`
+must differ from `server.bind`, and it is bound before the public port,
+so a clash stops startup. The counters are `requests_total` by final
+outcome, `provider_attempts_total` by provider and outcome, and
+`accounting_failures_total`. They count requests that reached a provider,
+like request records (ADR-027). Labels are only provider names and
+outcomes, never client keys, aliases, or anything else a client sends.
+Counters are kept in memory with no metrics dependency. This completes
+the metric that ADR-027 deferred; the optional background retry from
+ADR-009 remains deferred.
+
+**Consequences:** The public port exposes nothing new, and monitoring
+keeps working during a database outage. Network placement becomes the
+protection: an operator who binds `metrics.bind` to a public address
+exposes the page. Counters restart from zero with the process, which
+Prometheus handles. Latency histograms can be added when needed.
