@@ -112,6 +112,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         auth_timeout: config.auth.database_timeout,
         records: Arc::new(PgRecordStore::new(pool)),
         accounting_timeout: config.accounting.database_timeout,
+        limits: config.reliability,
         catalog: Arc::new(config.catalog()),
         providers: Arc::new(
             Registry::from_config(&config.providers).context("failed to set up providers")?,

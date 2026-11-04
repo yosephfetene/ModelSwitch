@@ -12,7 +12,7 @@ use axum::{Extension, Router};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use common::{ACCOUNTING_TIMEOUT, AUTH_TIMEOUT, DB_CHECK_TIMEOUT, send};
+use common::{ACCOUNTING_TIMEOUT, AUTH_TIMEOUT, DB_CHECK_TIMEOUT, REQUEST_LIMITS, send};
 use modelswitch::AppState;
 use modelswitch::api::auth::AuthenticatedKey;
 use modelswitch::app::{require_api_key, with_middleware};
@@ -30,6 +30,7 @@ async fn end_to_end_with_postgres(pool: PgPool) {
         auth_timeout: AUTH_TIMEOUT,
         records: Arc::new(PgRecordStore::new(pool.clone())),
         accounting_timeout: ACCOUNTING_TIMEOUT,
+        limits: REQUEST_LIMITS,
         catalog: Default::default(),
         providers: Default::default(),
     };

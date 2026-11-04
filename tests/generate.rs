@@ -273,13 +273,15 @@ async fn fallback_flag_is_accepted() {
 }
 
 // 11
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn provider_failure_is_502_without_provider_text() {
     let h = harness_with(FakeProvider::new(ProviderMode::Fail(
         "upstream said: {\"error\":\"internal secret sauce\"}".to_owned(),
     )));
 
-    let response = h.post(json!({ "model": "default", "input": "Hi" })).await;
+    let response = h
+        .post(json!({ "model": "primary/model-a", "input": "Hi" }))
+        .await;
 
     assert_error(&response, StatusCode::BAD_GATEWAY, "provider_error");
     assert!(!response.body.contains("secret sauce"), "{}", response.body);
@@ -292,7 +294,7 @@ async fn provider_hang_is_504_within_deadline() {
 
     let response = tokio::time::timeout(
         PROVIDER_TIMEOUT * 2,
-        h.post(json!({ "model": "default", "input": "Hi" })),
+        h.post(json!({ "model": "primary/model-a", "input": "Hi" })),
     )
     .await
     .expect("generate did not answer within twice the provider deadline");

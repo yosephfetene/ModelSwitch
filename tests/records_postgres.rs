@@ -12,7 +12,7 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use common::{ACCOUNTING_TIMEOUT, AUTH_TIMEOUT, DB_CHECK_TIMEOUT, send};
+use common::{ACCOUNTING_TIMEOUT, AUTH_TIMEOUT, DB_CHECK_TIMEOUT, REQUEST_LIMITS, send};
 use modelswitch::accounting::{Failure, Outcome, RecordStore, RequestRecord};
 use modelswitch::cli::keys;
 use modelswitch::domain::{Target, Usage};
@@ -50,6 +50,7 @@ async fn generate_writes_a_row(pool: PgPool) {
         auth_timeout: AUTH_TIMEOUT,
         records: Arc::new(PgRecordStore::new(pool.clone())),
         accounting_timeout: ACCOUNTING_TIMEOUT,
+        limits: REQUEST_LIMITS,
         catalog: Arc::new(Catalog::new(
             [("echo".to_owned(), vec!["echo-1".to_owned()])],
             [(

@@ -572,9 +572,11 @@ left, the retry is skipped and the executor falls back, which needs no
 wait. Pins and
 `routing.fallback = false` use the same rules with a one-target list.
 When every attempt fails, the client receives the last attempt's error
-(502 `provider_error` or 504 `upstream_timeout`) and
-`X-ModelSwitch-Attempts: <n>`; provider names and codes go only to logs
-and attempt records (ADR-019).
+(502 `provider_error` or 504 `upstream_timeout`); provider names and
+codes go only to logs and records (ADR-019). Every response that reached
+a provider carries `X-ModelSwitch-Attempts: <n>`. The limits are
+configured under `[reliability]`. This replaces the first-candidate-only
+behavior of ADR-024.
 
 **Consequences:** Failure handling is bounded in both attempts and time,
 so a fast-failing provider cannot cause a retry storm and a slow one

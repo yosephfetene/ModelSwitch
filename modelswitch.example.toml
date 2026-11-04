@@ -25,6 +25,12 @@ database_timeout_ms = 1000
 # with the header X-ModelSwitch-Accounting: failed.
 database_timeout_ms = 1000
 
+[reliability]
+# Provider calls per request, across retries and fallback (1-10).
+max_attempts = 3
+# Total time for a request, across all attempts (1000-300000 ms).
+request_timeout_ms = 60000
+
 # Providers by name. `adapter` is the wire format; more adapters arrive
 # with their slices. `timeout_ms` bounds one call (1000-300000, default 30000).
 [providers.echo]

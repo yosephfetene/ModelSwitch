@@ -9,6 +9,7 @@ use axum::http::{Request, StatusCode};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
+use modelswitch::reliability::Limits;
 use modelswitch::storage::PgDatabaseCheck;
 use modelswitch::storage::api_keys::PgKeyStore;
 use modelswitch::storage::request_records::PgRecordStore;
@@ -24,6 +25,10 @@ async fn ready_returns_ok_when_database_reachable(pool: PgPool) {
         auth_timeout: Duration::from_secs(1),
         records: Arc::new(PgRecordStore::new(pool)),
         accounting_timeout: Duration::from_secs(1),
+        limits: Limits {
+            max_attempts: 3,
+            request_timeout: Duration::from_secs(60),
+        },
         catalog: Default::default(),
         providers: Default::default(),
     });
