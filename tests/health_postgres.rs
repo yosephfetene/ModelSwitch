@@ -29,6 +29,7 @@ async fn ready_returns_ok_when_database_reachable(pool: PgPool) {
             max_attempts: 3,
             request_timeout: Duration::from_secs(60),
         },
+        metrics: Default::default(),
         catalog: Default::default(),
         providers: Default::default(),
     });

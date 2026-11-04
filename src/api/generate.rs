@@ -197,6 +197,10 @@ async fn generate(
     // The record is written before responding, so the response can say
     // whether it was; the answer is delivered either way (ADR-009).
     let recorded = write_record(&state, &record).await;
+    state.metrics.record_request(&record);
+    if !recorded {
+        state.metrics.record_accounting_failure();
+    }
     let mut response = match reply {
         Ok(reply) => Json(reply).into_response(),
         Err(error) => error.into_response(),

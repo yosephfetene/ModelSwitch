@@ -11,6 +11,7 @@ use tracing::Level;
 use crate::accounting::RecordStore;
 use crate::api;
 use crate::api::error::ApiError;
+use crate::metrics::Metrics;
 use crate::providers::Registry;
 use crate::reliability::Limits;
 use crate::routing::Catalog;
@@ -37,6 +38,8 @@ pub struct AppState {
     pub accounting_timeout: Duration,
     /// How far each request may go across retries and fallback.
     pub limits: Limits,
+    /// Running totals, read by the metrics listener.
+    pub metrics: Arc<Metrics>,
     /// Configured aliases and models, for resolving a request's `model`.
     pub catalog: Arc<Catalog>,
     /// Configured providers, ready to call.
@@ -47,6 +50,12 @@ pub struct AppState {
 pub fn build_router(state: AppState) -> Router {
     let v1 = require_api_key(api::generate::router(), &state);
     with_middleware(api::health::router().merge(v1)).with_state(state)
+}
+
+/// Builds the internal metrics application, served on its own listener
+/// so the public port never exposes it (ADR-030).
+pub fn build_metrics_router(metrics: Arc<Metrics>) -> Router {
+    with_middleware(api::metrics::router()).with_state(metrics)
 }
 
 /// Requires a valid API key on every route in `routes` (the `/v1` API).

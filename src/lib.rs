@@ -11,10 +11,11 @@ pub mod auth;
 pub mod cli;
 pub mod config;
 pub mod domain;
+pub mod metrics;
 pub mod observability;
 pub mod providers;
 pub mod reliability;
 pub mod routing;
 pub mod storage;
 
-pub use app::{AppState, build_router};
+pub use app::{AppState, build_metrics_router, build_router};

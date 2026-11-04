@@ -31,6 +31,7 @@ async fn end_to_end_with_postgres(pool: PgPool) {
         records: Arc::new(PgRecordStore::new(pool.clone())),
         accounting_timeout: ACCOUNTING_TIMEOUT,
         limits: REQUEST_LIMITS,
+        metrics: Default::default(),
         catalog: Default::default(),
         providers: Default::default(),
     };
