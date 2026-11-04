@@ -26,6 +26,7 @@ use modelswitch::accounting::{RecordStore, RecordStoreError, RequestRecord};
 use modelswitch::auth::api_key::{KeyHash, NewApiKey};
 use modelswitch::domain::{GenerateRequest, Generation, Provider, ProviderError, Usage};
 use modelswitch::providers::Registry;
+use modelswitch::rate_limit::{RateLimit, RateLimiter, TokenBucketLimiter};
 use modelswitch::reliability::Limits;
 use modelswitch::routing::Catalog;
 use modelswitch::storage::api_keys::{KeyLookup, KeyStore, KeyStoreError};
@@ -257,6 +258,14 @@ pub const REQUEST_LIMITS: Limits = Limits {
     request_timeout: Duration::from_secs(60),
 };
 
+/// High enough that only tests about rate limits ever meet the limit.
+pub fn generous_rate_limiter() -> Arc<dyn RateLimiter> {
+    Arc::new(TokenBucketLimiter::new(RateLimit {
+        requests_per_minute: 100_000,
+        burst: 100_000,
+    }))
+}
+
 pub fn state(db: FakeDatabase) -> AppState {
     state_with_keys(db, FakeKeyStore::new(DbMode::Up))
 }
@@ -279,6 +288,7 @@ pub fn state_with_records(
         accounting_timeout: ACCOUNTING_TIMEOUT,
         limits: REQUEST_LIMITS,
         metrics: Arc::default(),
+        rate_limiter: generous_rate_limiter(),
         catalog: Arc::new(Catalog::default()),
         providers: Arc::new(Registry::default()),
     }

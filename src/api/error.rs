@@ -13,7 +13,7 @@
 //! `Internal` error logs the detail; the client only ever sees the
 //! generic message.
 
-use axum::http::header::WWW_AUTHENTICATE;
+use axum::http::header::{RETRY_AFTER, WWW_AUTHENTICATE};
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
@@ -40,6 +40,9 @@ pub enum ApiError {
     /// The path exists but not for this HTTP method.
     #[error("method not allowed")]
     MethodNotAllowed,
+    /// This API key is over its rate limit.
+    #[error("rate limited")]
+    RateLimited { retry_after_secs: u64 },
     /// A dependency needed before any provider call (the database) is
     /// down or too slow. Temporary: clients should retry later.
     #[error("service unavailable")]
@@ -65,6 +68,7 @@ impl ApiError {
             Self::UnknownModel => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
+            Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::ServiceUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::ProviderError => StatusCode::BAD_GATEWAY,
             Self::UpstreamTimeout => StatusCode::GATEWAY_TIMEOUT,
@@ -81,6 +85,7 @@ impl ApiError {
             Self::UnknownModel => "unknown_model",
             Self::NotFound => "not_found",
             Self::MethodNotAllowed => "method_not_allowed",
+            Self::RateLimited { .. } => "rate_limited",
             Self::ServiceUnavailable => "service_unavailable",
             Self::ProviderError => "provider_error",
             Self::UpstreamTimeout => "upstream_timeout",
@@ -97,6 +102,7 @@ impl ApiError {
             Self::UnknownModel => "The model is not a configured alias or provider/model pin.",
             Self::NotFound => "No route matches this path.",
             Self::MethodNotAllowed => "This path does not support this HTTP method.",
+            Self::RateLimited { .. } => "Too many requests for this API key. Retry later.",
             Self::ServiceUnavailable => "The gateway is temporarily unavailable. Retry later.",
             Self::ProviderError => "The selected provider failed to generate a response.",
             Self::UpstreamTimeout => "The selected provider did not respond before the deadline.",
@@ -120,11 +126,20 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let mut response = self.status().into_response();
-        if self == Self::Unauthorized {
+        match self {
             // RFC 6750: tell the client how to authenticate.
-            response
-                .headers_mut()
-                .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+            Self::Unauthorized => {
+                response
+                    .headers_mut()
+                    .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+            }
+            // RFC 9110: tell the client when to come back.
+            Self::RateLimited { retry_after_secs } => {
+                response
+                    .headers_mut()
+                    .insert(RETRY_AFTER, HeaderValue::from(retry_after_secs));
+            }
+            _ => {}
         }
         response.extensions_mut().insert(self);
         response
@@ -158,6 +173,13 @@ mod tests {
             (ApiError::UnknownModel, 422, "unknown_model"),
             (ApiError::NotFound, 404, "not_found"),
             (ApiError::MethodNotAllowed, 405, "method_not_allowed"),
+            (
+                ApiError::RateLimited {
+                    retry_after_secs: 1,
+                },
+                429,
+                "rate_limited",
+            ),
             (ApiError::ServiceUnavailable, 503, "service_unavailable"),
             (ApiError::ProviderError, 502, "provider_error"),
             (ApiError::UpstreamTimeout, 504, "upstream_timeout"),

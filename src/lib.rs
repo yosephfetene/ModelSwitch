@@ -14,6 +14,7 @@ pub mod domain;
 pub mod metrics;
 pub mod observability;
 pub mod providers;
+pub mod rate_limit;
 pub mod reliability;
 pub mod routing;
 pub mod storage;

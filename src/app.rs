@@ -13,6 +13,7 @@ use crate::api;
 use crate::api::error::ApiError;
 use crate::metrics::Metrics;
 use crate::providers::Registry;
+use crate::rate_limit::RateLimiter;
 use crate::reliability::Limits;
 use crate::routing::Catalog;
 use crate::storage::DatabaseCheck;
@@ -40,6 +41,9 @@ pub struct AppState {
     pub limits: Limits,
     /// Running totals, read by the metrics listener.
     pub metrics: Arc<Metrics>,
+    /// Per-key request limits, a trait object so a shared store can
+    /// replace the in-memory one.
+    pub rate_limiter: Arc<dyn RateLimiter>,
     /// Configured aliases and models, for resolving a request's `model`.
     pub catalog: Arc<Catalog>,
     /// Configured providers, ready to call.
@@ -58,13 +62,20 @@ pub fn build_metrics_router(metrics: Arc<Metrics>) -> Router {
     with_middleware(api::metrics::router()).with_state(metrics)
 }
 
-/// Requires a valid API key on every route in `routes` (the `/v1` API).
-/// A route layer, so unknown paths still get 404 rather than 401.
+/// Requires a valid API key on every route in `routes` (the `/v1` API),
+/// then applies that key's rate limit. Route layers, so unknown paths
+/// still get 404 rather than 401, and the last one added runs first:
+/// the limiter only ever sees authenticated keys.
 pub fn require_api_key(routes: Router<AppState>, state: &AppState) -> Router<AppState> {
-    routes.route_layer(middleware::from_fn_with_state(
-        state.clone(),
-        api::auth::require_api_key,
-    ))
+    routes
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            api::rate_limit::rate_limit,
+        ))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            api::auth::require_api_key,
+        ))
 }
 
 /// Adds the fallbacks and middleware every route shares. Public so tests

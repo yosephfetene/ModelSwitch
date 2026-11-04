@@ -43,6 +43,10 @@
     localhost), redirects are never followed, provider responses are
     capped at 4 MiB, and provider error messages are discarded in favor
     of their short error code (ADR-025).
+-   Each API key has a rate limit, checked right after authentication
+    and before any other work. Counters are in memory and per server,
+    so a restart refills them and several servers each apply the limit
+    (ADR-031). Budgets are a separate, durable control.
 -   `GET /metrics` is served only on a separate internal listener
     (`metrics.bind`), never on the public port. It has no API key, so
     that address must stay off the public network (ADR-030).
