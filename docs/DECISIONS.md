@@ -567,7 +567,9 @@ most `request_timeout` in total (default 60 s), whichever ends first.
 Each attempt's deadline is the smaller of its provider's timeout and
 the time remaining. Before retrying the same target the executor waits
 a random 100--300 ms, doubling the range on each further retry of that
-target, never past the deadline; falling back needs no wait. Pins and
+target, never past the deadline: if the wait would not fit in the time
+left, the retry is skipped and the executor falls back, which needs no
+wait. Pins and
 `routing.fallback = false` use the same rules with a one-target list.
 When every attempt fails, the client receives the last attempt's error
 (502 `provider_error` or 504 `upstream_timeout`) and

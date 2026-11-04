@@ -1,10 +1,13 @@
-//! The retry and fallback executor (Stage 2 slice 2b, ADR-028), with
+﻿//! The retry and fallback executor (Stage 2 slice 2b, ADR-028), with
 //! fake providers.
 //!
 //! - Step 1: fallback down the candidates, stopping on request problems
 //!   and at `max_attempts`.
 //! - Step 2: a transient failure is retried once on the same target,
 //!   then the executor falls back.
+//! - Step 3: the whole request stays within `request_timeout`.
+//! - Step 4: a jittered wait before a same-target retry, never past the
+//!   deadline.
 //!
 //! Retry tests run on a paused clock, so later steps can add backoff
 //! waits without slowing them down.
@@ -323,4 +326,114 @@ async fn a_pin_is_retried_once_but_never_falls_back() {
 
     assert!(execution.generation.is_none());
     assert_eq!(h.calls(), [2, 0, 0]);
+}
+
+// Step 3: the whole request stays within `request_timeout`. Each provider
+// times out after PROVIDER_TIMEOUT (5 s).
+
+#[tokio::test(start_paused = true)]
+async fn hanging_candidates_stop_at_the_request_deadline() {
+    let h = harness([ProviderMode::Hang, ProviderMode::Hang, ProviderMode::Hang]);
+    let limits = Limits {
+        max_attempts: 3,
+        request_timeout: Duration::from_secs(8),
+    };
+    let started = tokio::time::Instant::now();
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), limits).await;
+
+    // a gets 5 s; b gets only the 3 s left; c is never called.
+    assert_eq!(started.elapsed(), Duration::from_secs(8));
+    assert_eq!(calls_sequence(&execution), ["a/m", "b/m"]);
+    assert_eq!(h.calls(), [1, 1, 0]);
+    assert_eq!(
+        execution.attempts[1].failure,
+        Some(AttemptFailure::TimedOut)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_deadline_shorter_than_the_provider_timeout_cuts_the_attempt() {
+    let h = harness([ProviderMode::Hang, answer("from b"), answer("from c")]);
+    let limits = Limits {
+        max_attempts: 3,
+        request_timeout: Duration::from_secs(2),
+    };
+    let started = tokio::time::Instant::now();
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), limits).await;
+
+    assert_eq!(
+        started.elapsed(),
+        Duration::from_secs(2),
+        "not the provider's 5 s"
+    );
+    assert!(execution.generation.is_none(), "no time left for b");
+    assert_eq!(h.calls(), [1, 0, 0]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn time_left_after_a_timeout_still_reaches_the_next_candidate() {
+    let h = harness([ProviderMode::Hang, answer("from b"), answer("from c")]);
+    let limits = Limits {
+        max_attempts: 3,
+        request_timeout: Duration::from_secs(8),
+    };
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), limits).await;
+
+    assert_eq!(execution.generation.as_ref().unwrap().output, "from b");
+}
+
+// Step 4: a jittered wait before retrying the same target, never past the
+// request deadline. The paused clock makes the waits exact and instant.
+
+#[tokio::test(start_paused = true)]
+async fn a_retry_waits_100_to_300_ms_first() {
+    let h = harness_with([
+        FakeProvider::scripted([status(503)], answer("from a")),
+        FakeProvider::new(answer("from b")),
+        FakeProvider::new(answer("from c")),
+    ]);
+    let started = tokio::time::Instant::now();
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), LIMITS).await;
+
+    assert_eq!(execution.generation.as_ref().unwrap().output, "from a");
+    let waited = started.elapsed();
+    assert!(
+        (Duration::from_millis(100)..=Duration::from_millis(300)).contains(&waited),
+        "{waited:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn falling_back_needs_no_wait() {
+    let h = harness([status(429), answer("from b"), answer("from c")]);
+    let started = tokio::time::Instant::now();
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), LIMITS).await;
+
+    assert_eq!(execution.generation.as_ref().unwrap().output, "from b");
+    assert_eq!(started.elapsed(), Duration::ZERO);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_retry_wait_past_the_deadline_falls_back_instead() {
+    let h = harness([status(503), answer("from b"), answer("from c")]);
+    let limits = Limits {
+        max_attempts: 3,
+        request_timeout: Duration::from_millis(50),
+    };
+    let started = tokio::time::Instant::now();
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), limits).await;
+
+    assert_eq!(
+        execution.generation.as_ref().unwrap().output,
+        "from b",
+        "the 100 ms wait did not fit, so b was tried at once"
+    );
+    assert_eq!(calls_sequence(&execution), ["a/m", "b/m"]);
+    assert_eq!(started.elapsed(), Duration::ZERO);
 }
