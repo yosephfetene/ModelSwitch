@@ -20,6 +20,14 @@ pub enum FailureClass {
 }
 
 impl FailureClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Transient => "transient",
+            Self::TargetProblem => "target_problem",
+            Self::RequestProblem => "request_problem",
+        }
+    }
+
     /// May the same target be tried again?
     pub fn retry_same_target(self) -> bool {
         matches!(self, FailureClass::Transient)

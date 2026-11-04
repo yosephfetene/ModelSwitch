@@ -66,11 +66,19 @@ optional background retry later writes the row, it is marked with
 
 ## `request_attempts`
 
--   `id`, `request_id`, `attempt_number`
+Implemented in `migrations/` (Stage 2, ADR-029). One row per provider
+call, written in the same transaction as its request record.
+
+-   `request_id`, `attempt_number` --- primary key; the first call is 1
 -   `provider`, `model`
--   `started_at`, `completed_at`, `latency_ms`
--   `outcome`, `provider_status_code`, `error_class`
--   `retry_decision` --- not_retried, retry, fallback, exhausted
+-   `status` --- succeeded, failed, timed_out
+-   `error_kind`, `error_code`, `provider_status` --- as in
+    `request_records`; short identifiers, never provider messages
+-   `error_class` --- transient, target_problem, request_problem; null
+    on success (ADR-028)
+-   `retry_decision` --- what happened next: not_retried, retry,
+    fallback, exhausted
+-   `latency_ms` --- the call itself, without backoff waits
 
 This separates one logical request from individual provider attempts.
 

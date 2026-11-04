@@ -55,20 +55,24 @@ pub struct Attempt {
     pub target: Target,
     /// `None` when it succeeded.
     pub failure: Option<AttemptFailure>,
+    /// How long the call took, without any backoff wait.
+    pub latency: Duration,
 }
 
 impl Attempt {
-    pub fn succeeded(target: &Target) -> Self {
+    pub fn succeeded(target: &Target, latency: Duration) -> Self {
         Self {
             target: target.clone(),
             failure: None,
+            latency,
         }
     }
 
-    pub fn failed(target: &Target, failure: AttemptFailure) -> Self {
+    pub fn failed(target: &Target, failure: AttemptFailure, latency: Duration) -> Self {
         Self {
             target: target.clone(),
             failure: Some(failure),
+            latency,
         }
     }
 }
@@ -177,9 +181,13 @@ pub async fn execute(
                 };
             }
 
-            match call_once(providers, target, request, remaining).await {
+            let attempt_started = Instant::now();
+            let result = call_once(providers, target, request, remaining).await;
+            let latency = attempt_started.elapsed();
+
+            match result {
                 Ok(generation) => {
-                    attempts.push(Attempt::succeeded(target));
+                    attempts.push(Attempt::succeeded(target, latency));
                     return Execution {
                         attempts,
                         generation: Some(generation),
@@ -187,7 +195,7 @@ pub async fn execute(
                 }
                 Err(failure) => {
                     let class = failure.class();
-                    attempts.push(Attempt::failed(target, failure));
+                    attempts.push(Attempt::failed(target, failure, latency));
 
                     if class.retry_same_target() && retries < RETRIES_PER_TARGET {
                         // Transient, with a retry left: wait a little, then

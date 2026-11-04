@@ -13,11 +13,14 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use common::{ACCOUNTING_TIMEOUT, AUTH_TIMEOUT, DB_CHECK_TIMEOUT, REQUEST_LIMITS, send};
-use modelswitch::accounting::{Failure, Outcome, RecordStore, RequestRecord};
+use modelswitch::accounting::{
+    AttemptRecord, Failure, Outcome, RecordStore, RequestRecord, RetryDecision,
+};
 use modelswitch::cli::keys;
 use modelswitch::domain::{Target, Usage};
 use modelswitch::providers::echo::EchoProvider;
 use modelswitch::providers::{ProviderSlot, Registry};
+use modelswitch::reliability::FailureClass;
 use modelswitch::routing::Catalog;
 use modelswitch::storage::PgDatabaseCheck;
 use modelswitch::storage::api_keys::PgKeyStore;
@@ -142,6 +145,107 @@ fn record(key_id: Uuid) -> RequestRecord {
             output_tokens: None,
             total_tokens: Some(u32::MAX),
         },
+        attempts: Vec::new(),
+    }
+}
+
+/// request_id, attempt_number, provider, status, provider_status,
+/// error_class, retry_decision.
+type AttemptRow = (String, i32, String, String, Option<i32>, String, String);
+
+fn attempt(provider: &str, class: FailureClass, decision: RetryDecision) -> AttemptRecord {
+    AttemptRecord {
+        provider: provider.to_owned(),
+        model: "m".to_owned(),
+        outcome: Outcome::Failed,
+        failure: Failure {
+            kind: Some("status"),
+            code: Some("rate_limit_exceeded".to_owned()),
+            provider_status: Some(429),
+        },
+        class: Some(class),
+        decision,
+        latency_ms: 40,
+    }
+}
+
+#[sqlx::test]
+async fn attempts_are_stored_in_order_with_their_request(pool: PgPool) {
+    let (_, key_id) = create_key(&pool).await;
+    let mut request = record(key_id);
+    request.attempts = vec![
+        attempt("groq", FailureClass::TargetProblem, RetryDecision::Fallback),
+        AttemptRecord {
+            outcome: Outcome::TimedOut,
+            failure: Failure::default(),
+            ..attempt(
+                "gemini",
+                FailureClass::TargetProblem,
+                RetryDecision::Exhausted,
+            )
+        },
+    ];
+
+    PgRecordStore::new(pool.clone())
+        .insert(&request)
+        .await
+        .unwrap();
+
+    let rows: Vec<AttemptRow> = sqlx::query_as(
+        "SELECT request_id, attempt_number, provider, status, provider_status, error_class, \
+                retry_decision \
+         FROM request_attempts ORDER BY attempt_number",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let id = request.request_id;
+    let row = |number, provider: &str, status: &str, code, decision: &str| {
+        (
+            id.clone(),
+            number,
+            provider.to_owned(),
+            status.to_owned(),
+            code,
+            "target_problem".to_owned(),
+            decision.to_owned(),
+        )
+    };
+    assert_eq!(
+        rows,
+        [
+            row(1, "groq", "failed", Some(429), "fallback"),
+            row(2, "gemini", "timed_out", None, "exhausted"),
+        ]
+    );
+}
+
+#[sqlx::test]
+async fn a_bad_attempt_rolls_back_the_whole_request(pool: PgPool) {
+    let (_, key_id) = create_key(&pool).await;
+    let mut request = record(key_id);
+    request.attempts = vec![
+        attempt("groq", FailureClass::TargetProblem, RetryDecision::Fallback),
+        AttemptRecord {
+            failure: Failure::default(),
+            ..attempt(
+                "gemini",
+                FailureClass::TargetProblem,
+                RetryDecision::Exhausted,
+            )
+        },
+    ];
+
+    let result = PgRecordStore::new(pool.clone()).insert(&request).await;
+
+    assert!(result.is_err(), "a failure without a kind was accepted");
+    for table in ["request_records", "request_attempts"] {
+        let count: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "{table} kept a row");
     }
 }
 
