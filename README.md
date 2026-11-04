@@ -4,8 +4,12 @@
 applications one API for multiple LLM providers, with explicit routing,
 bounded failover, usage/cost accounting, and operational visibility.
 
-**Status:** Early development (roadmap Stage 0). Only the health
-endpoints exist so far; the documents describe the intended system.
+**Status:** Pre-1.0 (roadmap Stage 2 complete). Working today:
+`POST /v1/generate` with API keys, model aliases and pins, Groq, Ollama,
+and Gemini adapters, bounded retries and fallback, per-request and
+per-attempt records, and metrics on an internal port. Limits, budgets,
+cost estimates, and the dashboard are later stages (see
+[the roadmap](docs/ROADMAP.md)).
 
 ## Goals
 
@@ -17,7 +21,7 @@ endpoints exist so far; the documents describe the intended system.
 -   Client authentication, limits, tests, and observable failure
     behavior.
 
-## Proposed stack
+## Stack
 
 -   Backend: Rust, Axum, Tokio
 -   Persistence: PostgreSQL 18, SQLx
