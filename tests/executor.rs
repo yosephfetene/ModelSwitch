@@ -1,6 +1,13 @@
-﻿//! The retry and fallback executor (Stage 2 slice 2b, ADR-028), with
-//! fake providers. Step 1: fallback down the candidates, stopping on
-//! request problems and at `max_attempts`.
+//! The retry and fallback executor (Stage 2 slice 2b, ADR-028), with
+//! fake providers.
+//!
+//! - Step 1: fallback down the candidates, stopping on request problems
+//!   and at `max_attempts`.
+//! - Step 2: a transient failure is retried once on the same target,
+//!   then the executor falls back.
+//!
+//! Retry tests run on a paused clock, so later steps can add backoff
+//! waits without slowing them down.
 
 mod common;
 
@@ -26,7 +33,11 @@ struct Harness {
 }
 
 fn harness(modes: [ProviderMode; 3]) -> Harness {
-    let providers: Vec<FakeProvider> = modes.into_iter().map(FakeProvider::new).collect();
+    harness_with(modes.map(FakeProvider::new))
+}
+
+fn harness_with(providers: [FakeProvider; 3]) -> Harness {
+    let providers = Vec::from(providers);
     let registry = Registry::new(["a", "b", "c"].into_iter().zip(&providers).map(
         |(name, provider)| {
             (
@@ -193,4 +204,123 @@ async fn a_timeout_falls_back_to_the_next_candidate() {
         execution.attempts[0].failure,
         Some(AttemptFailure::TimedOut)
     );
+}
+
+// Step 2: one retry of the same target for transient failures.
+
+fn calls_sequence(execution: &modelswitch::reliability::Execution) -> Vec<String> {
+    execution
+        .attempts
+        .iter()
+        .map(|attempt| attempt.target.to_string())
+        .collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn transient_failure_is_retried_on_the_same_target() {
+    let h = harness_with([
+        FakeProvider::scripted([status(503)], answer("from a, second try")),
+        FakeProvider::new(answer("from b")),
+        FakeProvider::new(answer("from c")),
+    ]);
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), LIMITS).await;
+
+    assert_eq!(
+        execution.generation.as_ref().unwrap().output,
+        "from a, second try"
+    );
+    assert_eq!(
+        summary(&execution),
+        [("a/m".to_owned(), false), ("a/m".to_owned(), true)]
+    );
+    assert_eq!(
+        h.calls(),
+        [2, 0, 0],
+        "the preferred provider got its second chance"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_connection_failure_is_retried_too() {
+    let h = harness_with([
+        FakeProvider::scripted(
+            [ProviderMode::Fail("connection reset".to_owned())],
+            answer("from a"),
+        ),
+        FakeProvider::new(answer("from b")),
+        FakeProvider::new(answer("from c")),
+    ]);
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), LIMITS).await;
+
+    assert_eq!(execution.generation.as_ref().unwrap().output, "from a");
+    assert_eq!(h.calls(), [2, 0, 0]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_second_transient_failure_falls_back() {
+    let h = harness([status(503), answer("from b"), answer("from c")]);
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), LIMITS).await;
+
+    assert_eq!(execution.generation.as_ref().unwrap().output, "from b");
+    assert_eq!(calls_sequence(&execution), ["a/m", "a/m", "b/m"]);
+    assert_eq!(h.calls(), [2, 1, 0], "only one retry per target");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_retry_that_hits_a_target_problem_falls_back() {
+    let h = harness_with([
+        FakeProvider::scripted([status(503)], status(429)),
+        FakeProvider::new(answer("from b")),
+        FakeProvider::new(answer("from c")),
+    ]);
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), LIMITS).await;
+
+    assert_eq!(execution.generation.as_ref().unwrap().output, "from b");
+    assert_eq!(calls_sequence(&execution), ["a/m", "a/m", "b/m"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_retry_that_hits_a_request_problem_stops() {
+    let h = harness_with([
+        FakeProvider::scripted([status(503)], blocked()),
+        FakeProvider::new(answer("from b")),
+        FakeProvider::new(answer("from c")),
+    ]);
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), LIMITS).await;
+
+    assert!(execution.generation.is_none());
+    assert_eq!(
+        h.calls(),
+        [2, 0, 0],
+        "a refused prompt must not be shopped around"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn retries_count_toward_max_attempts() {
+    let h = harness([status(503), status(503), answer("from c")]);
+
+    let execution = execute(&targets(&["a", "b", "c"]), &h.registry, &request(), LIMITS).await;
+
+    assert!(
+        execution.generation.is_none(),
+        "c is past the attempt limit"
+    );
+    assert_eq!(calls_sequence(&execution), ["a/m", "a/m", "b/m"]);
+    assert_eq!(h.calls(), [2, 1, 0]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pin_is_retried_once_but_never_falls_back() {
+    let h = harness([status(503), answer("from b"), answer("from c")]);
+
+    let execution = execute(&targets(&["a"]), &h.registry, &request(), LIMITS).await;
+
+    assert!(execution.generation.is_none());
+    assert_eq!(h.calls(), [2, 0, 0]);
 }

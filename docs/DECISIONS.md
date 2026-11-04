@@ -549,7 +549,10 @@ everything fails.
 **Decision:** Each failed attempt is classified:
 
 -   *Transient* (connection failure, provider 5xx, unusable response):
-    retry the same target, then fall back to the next candidate.
+    retry the same target once, then fall back to the next candidate.
+    One retry gives a passing glitch a chance to clear; a second failure
+    in a row suggests a real problem, and more retries would let one
+    failing provider use up the budget before a healthy one is tried.
 -   *Target problem* (timeout, 401, 403, 404, 429, other unexpected
     statuses): skip to the next candidate. A timeout already used its
     whole deadline and may have been billed, and a rate limit or a

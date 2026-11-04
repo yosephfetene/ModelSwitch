@@ -7,6 +7,10 @@ use super::{FailureClass, classify};
 use crate::domain::{GenerateRequest, Generation, ProviderError, Target};
 use crate::providers::Registry;
 
+/// How many times a transient failure is retried on the same target
+/// before falling back: one quick second chance (ADR-028).
+pub const RETRIES_PER_TARGET: usize = 1;
+
 /// How far one request may go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -93,12 +97,14 @@ async fn call_once(
 
 /// Tries `targets` in order until one answers (ADR-028).
 ///
-/// Step 1 rules:
+/// Rules:
 ///
 /// - Stop once `limits.max_attempts` attempts have been made.
 /// - On success: record it and return the answer.
-/// - On failure: record it; if its class allows falling back, go on to
-///   the next target, otherwise stop.
+/// - On failure: record it. If its class allows retrying the same target
+///   and this target has been retried fewer than `RETRIES_PER_TARGET`
+///   times, call it again. Otherwise, if its class allows falling back,
+///   go on to the next target; if not, stop.
 /// - If no target answers, return every attempt and no answer.
 pub async fn execute(
     targets: &[Target],
@@ -109,23 +115,45 @@ pub async fn execute(
     let mut attempts = Vec::new();
 
     for target in targets {
-        if attempts.len() >= limits.max_attempts {
-            break;
-        }
+        // Each target gets its own retry, so the counter restarts here.
+        let mut retries = 0;
 
-        match call_once(providers, target, request).await {
-            Ok(generation) => {
-                attempts.push(Attempt::succeeded(target));
+        loop {
+            if attempts.len() >= limits.max_attempts {
+                // Inside the inner loop, `break` would only move to the
+                // next target. Out of attempts means stop everything.
                 return Execution {
                     attempts,
-                    generation: Some(generation),
+                    generation: None,
                 };
             }
-            Err(failure) => {
-                let class = failure.class();
-                attempts.push(Attempt::failed(target, failure));
-                if !class.fall_back() {
-                    break;
+
+            match call_once(providers, target, request).await {
+                Ok(generation) => {
+                    attempts.push(Attempt::succeeded(target));
+                    return Execution {
+                        attempts,
+                        generation: Some(generation),
+                    };
+                }
+                Err(failure) => {
+                    let class = failure.class();
+                    attempts.push(Attempt::failed(target, failure));
+
+                    if class.retry_same_target() && retries < RETRIES_PER_TARGET {
+                        // Transient, with a retry left: same target again.
+                        retries += 1;
+                        continue;
+                    }
+                    if class.fall_back() {
+                        // Leave the inner loop: on to the next target.
+                        break;
+                    }
+                    // A request problem: nobody else may receive it.
+                    return Execution {
+                        attempts,
+                        generation: None,
+                    };
                 }
             }
         }
