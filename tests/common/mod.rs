@@ -5,7 +5,7 @@
 
 pub mod mock_http;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -154,13 +154,23 @@ pub enum ProviderMode {
 #[derive(Clone)]
 pub struct FakeProvider {
     mode: Arc<Mutex<ProviderMode>>,
+    /// Behaviors for the next calls, used up first, one per call.
+    script: Arc<Mutex<VecDeque<ProviderMode>>>,
     calls: Arc<Mutex<Vec<(String, GenerateRequest)>>>,
 }
 
 impl FakeProvider {
     pub fn new(mode: ProviderMode) -> Self {
+        Self::scripted([], mode)
+    }
+
+    /// Behaves as `first` on the first calls, one entry per call, then as
+    /// `then` from there on: `scripted([status(503)], answer)` fails once,
+    /// then answers.
+    pub fn scripted(first: impl IntoIterator<Item = ProviderMode>, then: ProviderMode) -> Self {
         Self {
-            mode: Arc::new(Mutex::new(mode)),
+            mode: Arc::new(Mutex::new(then)),
+            script: Arc::new(Mutex::new(first.into_iter().collect())),
             calls: Arc::default(),
         }
     }
@@ -187,7 +197,8 @@ impl Provider for FakeProvider {
             .lock()
             .unwrap()
             .push((model.to_owned(), request.clone()));
-        let mode = self.mode.lock().unwrap().clone();
+        let scripted = self.script.lock().unwrap().pop_front();
+        let mode = scripted.unwrap_or_else(|| self.mode.lock().unwrap().clone());
         Box::pin(async move {
             match mode {
                 ProviderMode::Reply(generation) => Ok(generation),
