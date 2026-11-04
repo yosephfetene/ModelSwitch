@@ -16,6 +16,7 @@ use secrecy::SecretString;
 use serde::Deserialize;
 
 use crate::domain::Target;
+use crate::rate_limit::RateLimit;
 use crate::reliability::Limits;
 use crate::routing::Catalog;
 
@@ -30,6 +31,8 @@ pub struct Config {
     /// How far each request may go (ADR-028).
     pub reliability: Limits,
     pub metrics: MetricsConfig,
+    /// The limit applied to each API key (ADR-031).
+    pub rate_limit: RateLimit,
     pub log: LogConfig,
     /// Configured providers by name.
     pub providers: BTreeMap<String, ProviderConfig>,
@@ -139,6 +142,8 @@ pub struct FileConfig {
     #[serde(default)]
     pub metrics: FileMetrics,
     #[serde(default)]
+    pub rate_limit: FileRateLimit,
+    #[serde(default)]
     pub log: FileLog,
     #[serde(default)]
     pub providers: BTreeMap<String, FileProvider>,
@@ -230,6 +235,28 @@ pub struct FileMetrics {
     pub bind: Option<SocketAddr>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileRateLimit {
+    #[serde(default = "default_rate_limit")]
+    pub requests_per_minute: u32,
+    #[serde(default = "default_rate_limit")]
+    pub burst: u32,
+}
+
+impl Default for FileRateLimit {
+    fn default() -> Self {
+        Self {
+            requests_per_minute: default_rate_limit(),
+            burst: default_rate_limit(),
+        }
+    }
+}
+
+fn default_rate_limit() -> u32 {
+    60
+}
+
 fn default_max_attempts() -> usize {
     3
 }
@@ -292,6 +319,7 @@ fn default_log_format() -> LogFormat {
 const MAX_CONNECTIONS_RANGE: std::ops::RangeInclusive<u32> = 1..=100;
 const DATABASE_TIMEOUT_MS_RANGE: std::ops::RangeInclusive<u64> = 100..=10_000;
 const MAX_ATTEMPTS_RANGE: std::ops::RangeInclusive<usize> = 1..=10;
+const RATE_LIMIT_RANGE: std::ops::RangeInclusive<u32> = 1..=100_000;
 const REQUEST_TIMEOUT_MS_RANGE: std::ops::RangeInclusive<u64> = 1_000..=300_000;
 const PROVIDER_TIMEOUT_MS_RANGE: std::ops::RangeInclusive<u64> = 1_000..=300_000;
 
@@ -416,6 +444,19 @@ impl Config {
             );
         }
 
+        for (field, value) in [
+            ("requests_per_minute", file.rate_limit.requests_per_minute),
+            ("burst", file.rate_limit.burst),
+        ] {
+            if !RATE_LIMIT_RANGE.contains(&value) {
+                problems.push(format!(
+                    "rate_limit.{field}: must be between {} and {}",
+                    RATE_LIMIT_RANGE.start(),
+                    RATE_LIMIT_RANGE.end()
+                ));
+            }
+        }
+
         if !MAX_ATTEMPTS_RANGE.contains(&file.reliability.max_attempts) {
             problems.push(format!(
                 "reliability.max_attempts: must be between {} and {}",
@@ -459,6 +500,10 @@ impl Config {
                 },
                 metrics: MetricsConfig {
                     bind: file.metrics.bind,
+                },
+                rate_limit: RateLimit {
+                    requests_per_minute: file.rate_limit.requests_per_minute,
+                    burst: file.rate_limit.burst,
                 },
                 log: LogConfig {
                     format: file.log.format,
@@ -818,6 +863,20 @@ mod tests {
             .to_string();
         assert!(error.contains("reliability.max_attempts"), "{error}");
         assert!(error.contains("reliability.request_timeout_ms"), "{error}");
+    }
+
+    #[test]
+    fn rate_limit_defaults_are_loaded_and_checked() {
+        let config = Config::from_toml(VALID, env_with_url).unwrap();
+        assert_eq!(config.rate_limit.requests_per_minute, 60);
+        assert_eq!(config.rate_limit.burst, 60);
+
+        let bad = format!("{VALID}\n[rate_limit]\nrequests_per_minute = 0\nburst = 0\n");
+        let error = Config::from_toml(&bad, env_with_url)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("rate_limit.requests_per_minute"), "{error}");
+        assert!(error.contains("rate_limit.burst"), "{error}");
     }
 
     #[test]

@@ -635,3 +635,35 @@ keeps working during a database outage. Network placement becomes the
 protection: an operator who binds `metrics.bind` to a public address
 exposes the page. Counters restart from zero with the process, which
 Prometheus handles. Latency histograms can be added when needed.
+
+## ADR-031 --- Per-key rate limits: in-memory token buckets
+
+**Status:** Accepted.
+
+**Context:** Any valid API key can send unlimited requests, and each one
+can spend provider credit. A buggy client loop or a leaked key needs a
+fast, cheap stop. FR-12 requires per-key limits; the storage and counting
+method were open.
+
+**Decision:** Each API key has a token bucket holding up to `burst`
+tokens, refilled at `requests_per_minute` (both default to 60). Buckets
+live in memory behind a `RateLimiter` trait. The limit is checked right
+after authentication and before any other work. Every authenticated
+request spends one token, including requests later rejected as invalid;
+the gateway's retries and fallback spend none, since a provider's
+failure is not the client's fault, and `max_attempts` already bounds
+them. Over the limit, the client gets `429 rate_limited` with
+`Retry-After` in whole seconds, rounded up; nothing reaches a provider,
+no request record is written, and `rate_limited_total` is incremented.
+All keys share the configured limit until per-key policies exist.
+
+**Consequences:** The check adds no database work and no failure mode,
+and it keeps working when PostgreSQL is down. A token bucket has no
+window boundary to exploit: no moment lets through more than `burst`.
+Only authenticated keys get a bucket, so memory is bounded by the number
+of real keys. A restart refills every bucket, and each server counts
+separately, so several servers multiply the effective limit; running
+more than one needs a shared `RateLimiter`, with its own deadline.
+This fits a limit that protects the next few seconds. Budgets, which
+protect money over longer periods, must be durable and will use
+PostgreSQL.

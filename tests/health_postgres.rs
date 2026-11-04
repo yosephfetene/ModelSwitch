@@ -9,6 +9,7 @@ use axum::http::{Request, StatusCode};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
+use modelswitch::rate_limit::{RateLimit, TokenBucketLimiter};
 use modelswitch::reliability::Limits;
 use modelswitch::storage::PgDatabaseCheck;
 use modelswitch::storage::api_keys::PgKeyStore;
@@ -30,6 +31,10 @@ async fn ready_returns_ok_when_database_reachable(pool: PgPool) {
             request_timeout: Duration::from_secs(60),
         },
         metrics: Default::default(),
+        rate_limiter: Arc::new(TokenBucketLimiter::new(RateLimit {
+            requests_per_minute: 60,
+            burst: 60,
+        })),
         catalog: Default::default(),
         providers: Default::default(),
     });

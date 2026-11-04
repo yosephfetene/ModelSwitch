@@ -15,7 +15,8 @@ Implemented in `migrations/` (Stage 1):
 -   `created_at`, `revoked_at`
 -   Status is derived: revoked when `revoked_at` is set, otherwise
     active (ADR-022). `expires_at` and an optional
-    `rate_limit_policy_id` arrive in Stage 3.
+    `rate_limit_policy_id` arrive in Stage 3. Until a key can have its own
+    policy, every key shares the configured limit (ADR-031).
 
 Keys are `ms_dev_` or `ms_live_` followed by 32 random bytes in base62.
 Generate keys securely, display a new key once, and never log its

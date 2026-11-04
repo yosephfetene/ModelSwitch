@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use modelswitch::config::Config;
 use modelswitch::providers::Registry;
+use modelswitch::rate_limit::TokenBucketLimiter;
 use modelswitch::storage::api_keys::PgKeyStore;
 use modelswitch::storage::request_records::PgRecordStore;
 use modelswitch::storage::{self, PgDatabaseCheck};
@@ -114,6 +115,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         accounting_timeout: config.accounting.database_timeout,
         limits: config.reliability,
         metrics: Arc::default(),
+        rate_limiter: Arc::new(TokenBucketLimiter::new(config.rate_limit)),
         catalog: Arc::new(config.catalog()),
         providers: Arc::new(
             Registry::from_config(&config.providers).context("failed to set up providers")?,

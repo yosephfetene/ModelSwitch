@@ -22,6 +22,7 @@ struct Counters {
     /// By provider and outcome.
     attempts: BTreeMap<(String, &'static str), u64>,
     accounting_failures: u64,
+    rate_limited: u64,
 }
 
 /// Totals since the process started. Shared by the request path, which
@@ -55,6 +56,11 @@ impl Metrics {
     /// is no row to look at, so this counter is how operators find out.
     pub fn record_accounting_failure(&self) {
         self.counters().accounting_failures += 1;
+    }
+
+    /// Counts a request refused by its key's rate limit (ADR-031).
+    pub fn record_rate_limited(&self) {
+        self.counters().rate_limited += 1;
     }
 
     /// The Prometheus text exposition format.
@@ -93,6 +99,13 @@ impl Metrics {
             "accounting_failures_total {}",
             counters.accounting_failures
         );
+
+        header(
+            &mut page,
+            "rate_limited_total",
+            "Requests refused by a rate limit.",
+        );
+        let _ = writeln!(page, "rate_limited_total {}", counters.rate_limited);
         page
     }
 }

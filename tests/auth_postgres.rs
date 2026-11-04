@@ -32,6 +32,7 @@ async fn end_to_end_with_postgres(pool: PgPool) {
         accounting_timeout: ACCOUNTING_TIMEOUT,
         limits: REQUEST_LIMITS,
         metrics: Default::default(),
+        rate_limiter: common::generous_rate_limiter(),
         catalog: Default::default(),
         providers: Default::default(),
     };

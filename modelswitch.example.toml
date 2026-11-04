@@ -31,6 +31,12 @@ max_attempts = 3
 # Total time for a request, across all attempts (1000-300000 ms).
 request_timeout_ms = 60000
 
+[rate_limit]
+# The limit for each API key (1-100000). Past it, requests get 429 with
+# Retry-After. `burst` is how many can arrive at once after a quiet spell.
+requests_per_minute = 60
+burst = 60
+
 [metrics]
 # Internal address for GET /metrics (Prometheus text format). It needs no
 # API key, so keep it off the public network. Remove this section to open
