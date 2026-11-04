@@ -26,7 +26,7 @@ use axum::routing::post;
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::accounting::{Failure, Outcome, RequestRecord};
+use crate::accounting::{Outcome, RequestRecord, attempt_records, outcome_of};
 use crate::api::auth::AuthenticatedKey;
 use crate::api::error::ApiError;
 use crate::api::request_context::{ClientRequestId, RequestId};
@@ -154,11 +154,7 @@ async fn generate(
         return ApiError::Internal.into_response();
     };
     let target = &last.target;
-    let (outcome, failure) = match &last.failure {
-        None => (Outcome::Succeeded, Failure::default()),
-        Some(AttemptFailure::Provider(error)) => (Outcome::Failed, Failure::from_error(error)),
-        Some(AttemptFailure::TimedOut) => (Outcome::TimedOut, Failure::default()),
-    };
+    let (outcome, failure) = outcome_of(last.failure.as_ref());
     let mut record = RequestRecord {
         request_id: request_id.as_str().to_owned(),
         client_request_id: client_request_id.map(|Extension(id)| id.as_str().to_owned()),
@@ -170,6 +166,7 @@ async fn generate(
         failure,
         latency_ms,
         usage: Usage::unavailable(),
+        attempts: attempt_records(&attempts),
     };
     let reply = match generation {
         Some(Generation { output, usage }) => {

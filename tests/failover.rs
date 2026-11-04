@@ -16,10 +16,11 @@ use common::{
     CapturedLogs, DbMode, FakeDatabase, FakeKeyStore, FakeProvider, FakeRecordStore, ProviderMode,
     TestResponse, send, state_with_records,
 };
-use modelswitch::accounting::Outcome;
+use modelswitch::accounting::{Outcome, RetryDecision};
 use modelswitch::build_router;
 use modelswitch::domain::{Generation, ProviderError, Target, Usage};
 use modelswitch::providers::{ProviderSlot, Registry};
+use modelswitch::reliability::FailureClass;
 use modelswitch::routing::Catalog;
 
 const ATTEMPTS: &str = "x-modelswitch-attempts";
@@ -136,6 +137,20 @@ async fn fallback_answers_and_reports_who_ran() {
     assert_eq!(records[0].provider, "second");
     assert_eq!(records[0].outcome, Outcome::Succeeded);
     assert_eq!(records[0].usage.total_tokens, Some(6));
+
+    let attempts = &records[0].attempts;
+    assert_eq!(attempts.len(), 2, "one attempt record per provider call");
+    assert_eq!(attempts[0].provider, "first");
+    assert_eq!(attempts[0].outcome, Outcome::Failed);
+    assert_eq!(attempts[0].class, Some(FailureClass::TargetProblem));
+    assert_eq!(
+        attempts[0].failure.code.as_deref(),
+        Some("provider_code_canary")
+    );
+    assert_eq!(attempts[0].decision, RetryDecision::Fallback);
+    assert_eq!(attempts[1].provider, "second");
+    assert_eq!(attempts[1].outcome, Outcome::Succeeded);
+    assert_eq!(attempts[1].decision, RetryDecision::NotRetried);
 }
 
 #[tokio::test(start_paused = true)]
@@ -151,6 +166,10 @@ async fn a_transient_failure_is_retried_invisibly() {
     assert_eq!(response.json()["provider"], "first");
     assert_eq!(response.header(ATTEMPTS), Some("2"));
     assert_eq!(h.calls(), (2, 0));
+    let records = h.records.records();
+    let decisions: Vec<_> = records[0].attempts.iter().map(|a| a.decision).collect();
+    assert_eq!(decisions, [RetryDecision::Retry, RetryDecision::NotRetried]);
+    assert_eq!(records[0].attempts[0].class, Some(FailureClass::Transient));
 }
 
 #[tokio::test(start_paused = true)]
@@ -177,6 +196,10 @@ async fn when_all_fail_the_client_gets_the_last_error_without_details() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].provider, "second");
     assert_eq!(records[0].outcome, Outcome::TimedOut);
+    let last = records[0].attempts.last().unwrap();
+    assert_eq!(last.outcome, Outcome::TimedOut);
+    assert_eq!(last.decision, RetryDecision::Exhausted);
+    assert_eq!(last.latency_ms, 5_000, "the provider's whole timeout");
 }
 
 #[tokio::test(start_paused = true)]

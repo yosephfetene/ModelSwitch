@@ -584,3 +584,26 @@ cannot hold a client past the request deadline. Jittered backoff keeps
 retries from many clients from arriving as one wave. Fallback can
 change the model that answers; responses already report which one ran
 (ADR-007).
+
+## ADR-029 --- Attempt records are written with their request
+
+**Status:** Accepted.
+
+**Context:** ADR-003 separates a request from its attempts. With
+retries and fallback, the request record alone shows only the last
+attempt, so "why did this request take three tries?" could be answered
+only from logs.
+
+**Decision:** Each provider call gets a row in `request_attempts`,
+written in the same transaction as the `request_records` row, under the
+same accounting deadline (ADR-027). If any row fails, nothing is stored
+and the usual accounting failure applies (ADR-009). A row holds the
+target, how the call ended, its failure class (ADR-028), and what
+happened next: `retry`, `fallback`, `exhausted` (another try was allowed
+but nothing was left to try), or `not_retried`. That decision is derived
+from the following attempt, so the executor does not track it.
+
+**Consequences:** A request never exists without its attempts, or the
+reverse, at the cost of a few more inserts per request. Token counts
+stay on the request: providers report none for a failed call, so usage
+spent on failed attempts remains unknown (ADR-010).
