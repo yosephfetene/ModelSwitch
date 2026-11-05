@@ -1,5 +1,6 @@
 //! Authentication against a real PostgreSQL (Stage 1 slice 2b spec,
-//! case 14): a key from `keys create` works until `keys revoke`.
+//! case 14, and Stage 3 slice 3c): a key from `keys create` works until
+//! it is revoked or its expiry passes, and `ms_live_` keys work the same.
 
 mod common;
 
@@ -12,17 +13,19 @@ use axum::{Extension, Router};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use common::{ACCOUNTING_TIMEOUT, AUTH_TIMEOUT, DB_CHECK_TIMEOUT, REQUEST_LIMITS, send};
+use common::{
+    ACCOUNTING_TIMEOUT, AUTH_TIMEOUT, DB_CHECK_TIMEOUT, REQUEST_LIMITS, TestResponse, send,
+};
 use modelswitch::AppState;
 use modelswitch::api::auth::AuthenticatedKey;
 use modelswitch::app::{require_api_key, with_middleware};
-use modelswitch::cli::keys;
+use modelswitch::auth::api_key::KeyEnvironment;
+use modelswitch::cli::keys::{self, CreateOptions};
 use modelswitch::storage::PgDatabaseCheck;
 use modelswitch::storage::api_keys::PgKeyStore;
 use modelswitch::storage::request_records::PgRecordStore;
 
-#[sqlx::test]
-async fn end_to_end_with_postgres(pool: PgPool) {
+fn app(pool: &PgPool) -> Router {
     let state = AppState {
         db: Arc::new(PgDatabaseCheck::new(pool.clone())),
         db_check_timeout: DB_CHECK_TIMEOUT,
@@ -41,36 +44,102 @@ async fn end_to_end_with_postgres(pool: PgPool) {
         "/v1/whoami",
         get(|Extension(key): Extension<AuthenticatedKey>| async move { key.id.to_string() }),
     );
-    let app = with_middleware(require_api_key(v1, &state)).with_state(state);
-    let call = |key: String| {
-        let app = app.clone();
-        async move {
-            let request = Request::get("/v1/whoami")
-                .header("authorization", format!("Bearer {key}"))
-                .body(Body::empty())
-                .unwrap();
-            send(&app, request).await
-        }
-    };
+    with_middleware(require_api_key(v1, &state)).with_state(state)
+}
 
+async fn whoami(app: &Router, key: &str) -> TestResponse {
+    let request = Request::get("/v1/whoami")
+        .header("authorization", format!("Bearer {key}"))
+        .body(Body::empty())
+        .unwrap();
+    send(app, request).await
+}
+
+/// Runs `keys create` and returns (plaintext key, ID).
+async fn create(pool: &PgPool, options: CreateOptions) -> (String, Uuid) {
     let mut out = Vec::new();
-    keys::create(&pool, "e2e", &mut out).await.unwrap();
+    keys::create(pool, "e2e", options, &mut out).await.unwrap();
     let key = String::from_utf8(out)
         .unwrap()
         .lines()
         .last()
         .unwrap()
         .to_owned();
-    let id: Uuid = sqlx::query_scalar("SELECT id FROM client_api_keys")
-        .fetch_one(&pool)
+    let id = sqlx::query_scalar("SELECT id FROM client_api_keys")
+        .fetch_one(pool)
         .await
         .unwrap();
+    (key, id)
+}
 
-    let before = call(key.clone()).await;
+/// Moves the key's whole life into the past, ending `ago`.
+async fn expire(pool: &PgPool, ago: &str) {
+    sqlx::query(
+        "UPDATE client_api_keys SET created_at = now() - interval '1 year', \
+                expires_at = now() - $1::interval",
+    )
+    .bind(ago)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test]
+async fn end_to_end_with_postgres(pool: PgPool) {
+    let app = app(&pool);
+    let (key, id) = create(&pool, CreateOptions::default()).await;
+
+    let before = whoami(&app, &key).await;
     keys::revoke(&pool, id, &mut Vec::new()).await.unwrap();
-    let after = call(key).await;
+    let after = whoami(&app, &key).await;
 
     assert_eq!(before.status, StatusCode::OK);
     assert_eq!(before.body, id.to_string());
     assert_eq!(after.status, StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test]
+async fn a_live_key_works_like_any_other(pool: PgPool) {
+    let app = app(&pool);
+    let options = CreateOptions {
+        environment: KeyEnvironment::Live,
+        ..Default::default()
+    };
+    let (key, id) = create(&pool, options).await;
+
+    let response = whoami(&app, &key).await;
+
+    assert!(key.starts_with("ms_live_"), "{key:.8}");
+    assert_eq!(response.status, StatusCode::OK);
+    assert_eq!(response.body, id.to_string());
+}
+
+#[sqlx::test]
+async fn a_key_works_until_its_expiry_passes(pool: PgPool) {
+    let app = app(&pool);
+    let options = CreateOptions {
+        expires_in_days: Some(30),
+        ..Default::default()
+    };
+    let (key, _) = create(&pool, options).await;
+
+    let before = whoami(&app, &key).await;
+    expire(&pool, "1 second").await;
+    let after = whoami(&app, &key).await;
+
+    assert_eq!(before.status, StatusCode::OK);
+    assert_eq!(after.status, StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test]
+async fn a_key_without_an_expiry_keeps_working(pool: PgPool) {
+    let app = app(&pool);
+    let (key, _) = create(&pool, CreateOptions::default()).await;
+
+    sqlx::query("UPDATE client_api_keys SET created_at = now() - interval '20 years'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(whoami(&app, &key).await.status, StatusCode::OK);
 }

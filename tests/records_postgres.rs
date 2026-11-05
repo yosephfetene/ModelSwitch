@@ -29,7 +29,9 @@ use modelswitch::{AppState, build_router};
 
 async fn create_key(pool: &PgPool) -> (String, Uuid) {
     let mut out = Vec::new();
-    keys::create(pool, "records", &mut out).await.unwrap();
+    keys::create(pool, "records", Default::default(), &mut out)
+        .await
+        .unwrap();
     let key = String::from_utf8(out)
         .unwrap()
         .lines()

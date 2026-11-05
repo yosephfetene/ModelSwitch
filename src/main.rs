@@ -3,9 +3,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use chrono::Utc;
 use clap::{Parser, Subcommand};
 use uuid::Uuid;
 
+use modelswitch::auth::api_key::KeyEnvironment;
+use modelswitch::cli::keys::CreateOptions;
 use modelswitch::concurrency::ConcurrencyLimiter;
 use modelswitch::config::Config;
 use modelswitch::providers::Registry;
@@ -49,6 +52,13 @@ enum KeysCommand {
         /// Label for the key, such as the client or machine using it.
         #[arg(long)]
         name: String,
+        /// Make an `ms_live_` key instead of an `ms_dev_` one.
+        #[arg(long)]
+        live: bool,
+        /// Days until the key stops working (1-3650). Without this, it
+        /// works until revoked.
+        #[arg(long, value_name = "DAYS")]
+        expires_in_days: Option<u32>,
     },
     /// List keys (prefixes only, never full keys).
     List,
@@ -98,8 +108,23 @@ async fn keys(config: Config, command: KeysCommand) -> anyhow::Result<()> {
     let pool = storage::connect_lazy(&config.database).context("invalid database configuration")?;
     let mut out = std::io::stdout().lock();
     match command {
-        KeysCommand::Create { name } => cli::keys::create(&pool, &name, &mut out).await,
-        KeysCommand::List => cli::keys::list(&pool, &mut out).await,
+        KeysCommand::Create {
+            name,
+            live,
+            expires_in_days,
+        } => {
+            let environment = if live {
+                KeyEnvironment::Live
+            } else {
+                KeyEnvironment::Dev
+            };
+            let options = CreateOptions {
+                environment,
+                expires_in_days,
+            };
+            cli::keys::create(&pool, &name, options, &mut out).await
+        }
+        KeysCommand::List => cli::keys::list(&pool, Utc::now(), &mut out).await,
         KeysCommand::Revoke { id } => cli::keys::revoke(&pool, id, &mut out).await,
     }
 }

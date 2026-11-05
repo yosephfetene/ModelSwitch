@@ -1,13 +1,14 @@
 //! API key authentication for `/v1/*` routes (ADR-012).
 //!
-//! - Every bad key (missing, malformed, unknown, revoked) gets the same
-//!   401, so a client cannot learn which; the reason goes to the logs.
+//! - Every bad key (missing, malformed, unknown, revoked, expired) gets
+//!   the same 401, so a client cannot learn which; the reason goes to the
+//!   logs.
 //! - Keys that do not have the exact key shape are rejected without a
 //!   database query, so junk cannot load PostgreSQL.
 //! - Fails closed: if the key cannot be checked (database down or past
 //!   its deadline), the request is refused with 503, never let through.
-//! - No cache: every request asks the database, so revocation is
-//!   immediate.
+//! - No cache: every request asks the database, so revocation and
+//!   expiry apply immediately.
 //!
 //! Neither the key nor the `Authorization` header is ever logged.
 
@@ -39,6 +40,7 @@ enum Rejection {
     Malformed,
     Unknown,
     Revoked,
+    Expired,
 }
 
 impl fmt::Display for Rejection {
@@ -48,6 +50,7 @@ impl fmt::Display for Rejection {
             Self::Malformed => "malformed",
             Self::Unknown => "unknown",
             Self::Revoked => "revoked",
+            Self::Expired => "expired",
         })
     }
 }
@@ -64,7 +67,9 @@ pub async fn require_api_key(
 
     let lookup = tokio::time::timeout(state.auth_timeout, state.keys.find_by_hash(hash)).await;
     match lookup {
-        Ok(Ok(Some(key))) if !key.revoked => {
+        Ok(Ok(Some(key))) if key.revoked => reject(Rejection::Revoked, Some(key.id)),
+        Ok(Ok(Some(key))) if key.expired => reject(Rejection::Expired, Some(key.id)),
+        Ok(Ok(Some(key))) => {
             if let Some(RequestSpan(span)) = request.extensions().get::<RequestSpan>() {
                 span.record("key_id", tracing::field::display(key.id));
             }
@@ -73,7 +78,6 @@ pub async fn require_api_key(
                 .insert(AuthenticatedKey { id: key.id });
             next.run(request).await
         }
-        Ok(Ok(Some(key))) => reject(Rejection::Revoked, Some(key.id)),
         Ok(Ok(None)) => reject(Rejection::Unknown, None),
         Ok(Err(error)) => {
             tracing::warn!(%error, "auth: key lookup failed");

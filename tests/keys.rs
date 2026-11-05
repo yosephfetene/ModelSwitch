@@ -3,18 +3,23 @@
 
 mod common;
 
+use chrono::{TimeDelta, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use common::CapturedLogs;
-use modelswitch::auth::api_key::{KeyHash, KeyName, NewApiKey};
-use modelswitch::cli::keys;
+use modelswitch::auth::api_key::{KeyEnvironment, KeyHash, KeyName, NewApiKey};
+use modelswitch::cli::keys::{self, CreateOptions};
 use modelswitch::storage::{self, api_keys};
 
 /// Runs `keys create` and returns (output, plaintext key).
 async fn create(pool: &PgPool, name: &str) -> (String, String) {
+    create_with(pool, name, CreateOptions::default()).await
+}
+
+async fn create_with(pool: &PgPool, name: &str, options: CreateOptions) -> (String, String) {
     let mut out = Vec::new();
-    keys::create(pool, name, &mut out).await.unwrap();
+    keys::create(pool, name, options, &mut out).await.unwrap();
     let out = String::from_utf8(out).unwrap();
     let key = out.lines().last().unwrap().to_owned();
     (out, key)
@@ -22,7 +27,7 @@ async fn create(pool: &PgPool, name: &str) -> (String, String) {
 
 async fn list(pool: &PgPool) -> String {
     let mut out = Vec::new();
-    keys::list(pool, &mut out).await.unwrap();
+    keys::list(pool, Utc::now(), &mut out).await.unwrap();
     String::from_utf8(out).unwrap()
 }
 
@@ -78,7 +83,7 @@ async fn create_stores_hash_and_prefix_never_plaintext(pool: PgPool) {
 #[sqlx::test]
 async fn create_rejects_invalid_name_before_writing(pool: PgPool) {
     for name in ["   ", &"x".repeat(65), "evil\nname"] {
-        let result = keys::create(&pool, name, &mut Vec::new()).await;
+        let result = keys::create(&pool, name, CreateOptions::default(), &mut Vec::new()).await;
 
         assert!(result.is_err(), "{name:?} accepted");
     }
@@ -170,13 +175,134 @@ async fn revoking_an_unknown_id_fails(pool: PgPool) {
 
 #[sqlx::test]
 async fn database_rejects_duplicate_key_hashes(pool: PgPool) {
-    let key = NewApiKey::from_random_bytes([9; 32]);
+    let key = NewApiKey::from_random_bytes(KeyEnvironment::Dev, [9; 32]);
     let name = KeyName::parse("dup").unwrap();
 
-    api_keys::insert(&pool, &name, &key).await.unwrap();
-    let second = api_keys::insert(&pool, &name, &key).await;
+    api_keys::insert(&pool, &name, &key, None).await.unwrap();
+    let second = api_keys::insert(&pool, &name, &key, None).await;
 
     assert!(second.is_err(), "duplicate hash accepted");
+}
+
+fn expiring_in(days: u32) -> CreateOptions {
+    CreateOptions {
+        expires_in_days: Some(days),
+        ..Default::default()
+    }
+}
+
+#[sqlx::test]
+async fn create_makes_a_live_key_on_request(pool: PgPool) {
+    let options = CreateOptions {
+        environment: KeyEnvironment::Live,
+        ..Default::default()
+    };
+
+    let (out, key) = create_with(&pool, "prod", options).await;
+
+    assert!(key.starts_with("ms_live_"), "{out}");
+    let prefix: String = sqlx::query_scalar("SELECT key_prefix FROM client_api_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(prefix, key[..12]);
+    assert!(list(&pool).await.contains(&prefix));
+}
+
+#[sqlx::test]
+async fn a_new_key_never_expires_unless_asked(pool: PgPool) {
+    let (out, _) = create(&pool, "laptop").await;
+
+    let never: bool = sqlx::query_scalar("SELECT expires_at IS NULL FROM client_api_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(never);
+    assert!(!out.contains("expires"), "{out}");
+    let listing = list(&pool).await;
+    let line = listing.lines().last().unwrap();
+    assert!(line.contains("never"), "{line}");
+}
+
+#[sqlx::test]
+async fn expiry_is_counted_from_creation(pool: PgPool) {
+    let (out, key) = create_with(&pool, "contractor", expiring_in(30)).await;
+
+    let exact: bool = sqlx::query_scalar(
+        "SELECT expires_at = created_at + interval '30 days' FROM client_api_keys",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(exact);
+    assert!(out.contains("It expires"), "{out}");
+    assert_eq!(out.lines().last().unwrap(), key, "the key stays last");
+}
+
+#[sqlx::test]
+async fn create_rejects_invalid_expiry_before_writing(pool: PgPool) {
+    for days in [0, 3651] {
+        let options = expiring_in(days);
+
+        let result = keys::create(&pool, "x", options, &mut Vec::new()).await;
+
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("between 1 and 3650"), "{error}");
+    }
+    assert_eq!(table_dump(&pool).await, "");
+}
+
+#[sqlx::test]
+async fn list_shows_expired_keys_as_of_the_time_given(pool: PgPool) {
+    create_with(&pool, "contractor", expiring_in(30)).await;
+    let listing_at = async |now| {
+        let mut out = Vec::new();
+        keys::list(&pool, now, &mut out).await.unwrap();
+        String::from_utf8(out).unwrap()
+    };
+
+    let today = listing_at(Utc::now()).await;
+    let later = listing_at(Utc::now() + TimeDelta::days(31)).await;
+
+    assert!(today.lines().last().unwrap().contains("active"), "{today}");
+    assert!(later.lines().last().unwrap().contains("expired"), "{later}");
+}
+
+#[sqlx::test]
+async fn an_expired_key_can_still_be_revoked(pool: PgPool) {
+    create_with(&pool, "contractor", expiring_in(1)).await;
+    let id = only_key_id(&pool).await;
+    sqlx::query(
+        "UPDATE client_api_keys SET created_at = now() - interval '2 days', \
+                expires_at = now() - interval '1 day'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(list(&pool).await.contains("expired"));
+
+    revoke(&pool, id).await.unwrap();
+
+    assert!(
+        list(&pool)
+            .await
+            .lines()
+            .last()
+            .unwrap()
+            .contains("revoked")
+    );
+}
+
+#[sqlx::test]
+async fn the_schema_rejects_an_expiry_before_creation(pool: PgPool) {
+    create(&pool, "laptop").await;
+
+    let result =
+        sqlx::query("UPDATE client_api_keys SET expires_at = created_at - interval '1 second'")
+            .execute(&pool)
+            .await;
+
+    assert!(result.is_err(), "an impossible expiry was stored");
 }
 
 #[sqlx::test]

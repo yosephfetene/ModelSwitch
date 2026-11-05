@@ -26,13 +26,17 @@
 
 -   Format: `ms_dev_` or `ms_live_` followed by 32 random bytes from a
     cryptographically secure generator, encoded in base62. The prefix
-    lets secret scanners recognize leaked keys.
+    lets secret scanners recognize leaked keys. It is a label only: the
+    server treats both alike, so keep each environment in its own
+    database (ADR-033).
 -   Storage: SHA-256 hash plus a short display prefix; never the full
     key. A fast hash is appropriate because keys are high-entropy;
     slow password hashes (Argon2, bcrypt) defend low-entropy human
     secrets and would only add per-request latency (ADR-012).
 -   Lifecycle: created and revoked with `modelswitch keys` CLI
-    subcommands; shown once; revocation is checked on every request.
+    subcommands; shown once; revocation and expiry are checked on every
+    request. Expiry is optional (`--expires-in-days`), so give temporary
+    keys one; without it, a key works until revoked (ADR-033).
 -   Verification: one uniform 401 for every bad key (the reason is only
     logged), keys of the wrong shape rejected before any database
     query, and fail closed with 503 when the key cannot be checked
