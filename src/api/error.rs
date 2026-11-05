@@ -43,6 +43,10 @@ pub enum ApiError {
     /// This API key is over its rate limit.
     #[error("rate limited")]
     RateLimited { retry_after_secs: u64 },
+    /// This API key has too many requests running. No `Retry-After`:
+    /// nobody knows when one will finish (ADR-032).
+    #[error("concurrency limited")]
+    ConcurrencyLimited,
     /// A dependency needed before any provider call (the database) is
     /// down or too slow. Temporary: clients should retry later.
     #[error("service unavailable")]
@@ -68,7 +72,7 @@ impl ApiError {
             Self::UnknownModel => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
+            Self::RateLimited { .. } | Self::ConcurrencyLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::ServiceUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::ProviderError => StatusCode::BAD_GATEWAY,
             Self::UpstreamTimeout => StatusCode::GATEWAY_TIMEOUT,
@@ -86,6 +90,7 @@ impl ApiError {
             Self::NotFound => "not_found",
             Self::MethodNotAllowed => "method_not_allowed",
             Self::RateLimited { .. } => "rate_limited",
+            Self::ConcurrencyLimited => "concurrency_limited",
             Self::ServiceUnavailable => "service_unavailable",
             Self::ProviderError => "provider_error",
             Self::UpstreamTimeout => "upstream_timeout",
@@ -103,6 +108,7 @@ impl ApiError {
             Self::NotFound => "No route matches this path.",
             Self::MethodNotAllowed => "This path does not support this HTTP method.",
             Self::RateLimited { .. } => "Too many requests for this API key. Retry later.",
+            Self::ConcurrencyLimited => "This API key has too many requests running. Retry later.",
             Self::ServiceUnavailable => "The gateway is temporarily unavailable. Retry later.",
             Self::ProviderError => "The selected provider failed to generate a response.",
             Self::UpstreamTimeout => "The selected provider did not respond before the deadline.",
@@ -180,6 +186,7 @@ mod tests {
                 429,
                 "rate_limited",
             ),
+            (ApiError::ConcurrencyLimited, 429, "concurrency_limited"),
             (ApiError::ServiceUnavailable, 503, "service_unavailable"),
             (ApiError::ProviderError, 502, "provider_error"),
             (ApiError::UpstreamTimeout, 504, "upstream_timeout"),

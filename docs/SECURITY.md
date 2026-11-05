@@ -47,6 +47,10 @@
     and before any other work. Counters are in memory and per server,
     so a restart refills them and several servers each apply the limit
     (ADR-031). Budgets are a separate, durable control.
+-   Each API key may have a fixed number of requests running at once;
+    past that, requests are refused immediately rather than queued. The
+    server's total is therefore at most keys × seats, so creating keys
+    raises it (ADR-032).
 -   `GET /metrics` is served only on a separate internal listener
     (`metrics.bind`), never on the public port. It has no API key, so
     that address must stay off the public network (ADR-030).

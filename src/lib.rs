@@ -9,6 +9,7 @@ pub mod api;
 pub mod app;
 pub mod auth;
 pub mod cli;
+pub mod concurrency;
 pub mod config;
 pub mod domain;
 pub mod metrics;

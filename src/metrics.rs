@@ -7,7 +7,7 @@
 //! names are validated as `a-z 0-9 - _`, so they need no escaping.
 //!
 //! Counters live in memory and restart from zero with the process, which
-//! monitoring tools expect. Three counters do not justify a dependency.
+//! monitoring tools expect. A few counters do not justify a dependency.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -23,6 +23,7 @@ struct Counters {
     attempts: BTreeMap<(String, &'static str), u64>,
     accounting_failures: u64,
     rate_limited: u64,
+    concurrency_limited: u64,
 }
 
 /// Totals since the process started. Shared by the request path, which
@@ -61,6 +62,12 @@ impl Metrics {
     /// Counts a request refused by its key's rate limit (ADR-031).
     pub fn record_rate_limited(&self) {
         self.counters().rate_limited += 1;
+    }
+
+    /// Counts a request refused because its key had no free seat
+    /// (ADR-032). A rise usually means a provider has slowed down.
+    pub fn record_concurrency_limited(&self) {
+        self.counters().concurrency_limited += 1;
     }
 
     /// The Prometheus text exposition format.
@@ -106,6 +113,17 @@ impl Metrics {
             "Requests refused by a rate limit.",
         );
         let _ = writeln!(page, "rate_limited_total {}", counters.rate_limited);
+
+        header(
+            &mut page,
+            "concurrency_limited_total",
+            "Requests refused by a concurrency limit.",
+        );
+        let _ = writeln!(
+            page,
+            "concurrency_limited_total {}",
+            counters.concurrency_limited
+        );
         page
     }
 }

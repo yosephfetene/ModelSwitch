@@ -33,6 +33,7 @@ async fn end_to_end_with_postgres(pool: PgPool) {
         limits: REQUEST_LIMITS,
         metrics: Default::default(),
         rate_limiter: common::generous_rate_limiter(),
+        concurrency: common::generous_concurrency(),
         catalog: Default::default(),
         providers: Default::default(),
     };
