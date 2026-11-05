@@ -15,6 +15,7 @@ use modelswitch::config::Config;
 use modelswitch::providers::Registry;
 use modelswitch::rate_limit::TokenBucketLimiter;
 use modelswitch::storage::api_keys::PgKeyStore;
+use modelswitch::storage::budgets::PgBudgetStore;
 use modelswitch::storage::request_records::PgRecordStore;
 use modelswitch::storage::{self, PgDatabaseCheck};
 use modelswitch::{AppState, build_metrics_router, build_router, cli, observability};
@@ -66,6 +67,22 @@ enum KeysCommand {
     },
     /// List keys (prefixes only, never full keys).
     List,
+    /// Set or clear a key's monthly budget.
+    Budget {
+        /// The key's ID, as shown by `keys list`.
+        id: Uuid,
+        /// USD per calendar month (UTC), such as 20.
+        #[arg(
+            long,
+            value_name = "USD",
+            required_unless_present = "clear",
+            conflicts_with = "clear"
+        )]
+        monthly_usd: Option<String>,
+        /// Remove the budget.
+        #[arg(long)]
+        clear: bool,
+    },
     /// Revoke a key immediately.
     Revoke {
         /// The key's ID, as shown by `keys list`.
@@ -154,6 +171,9 @@ async fn keys(config: Config, command: KeysCommand) -> anyhow::Result<()> {
             cli::keys::create(&pool, &name, options, &mut out).await
         }
         KeysCommand::List => cli::keys::list(&pool, Utc::now(), &mut out).await,
+        KeysCommand::Budget {
+            id, monthly_usd, ..
+        } => cli::keys::set_budget(&pool, id, monthly_usd.as_deref(), &mut out).await,
         KeysCommand::Revoke { id } => cli::keys::revoke(&pool, id, &mut out).await,
     }
 }
@@ -190,6 +210,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         db_check_timeout: config.health.database_timeout,
         keys: Arc::new(PgKeyStore::new(pool.clone())),
         auth_timeout: config.auth.database_timeout,
+        budgets: Arc::new(PgBudgetStore::new(pool.clone())),
         records: Arc::new(PgRecordStore::new(pool)),
         accounting_timeout: config.accounting.database_timeout,
         limits: config.reliability,

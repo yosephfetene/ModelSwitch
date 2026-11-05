@@ -25,6 +25,7 @@ struct Counters {
     rate_limited: u64,
     concurrency_limited: u64,
     unpriced_requests: u64,
+    budget_exceeded: u64,
 }
 
 /// Totals since the process started. Shared by the request path, which
@@ -75,6 +76,12 @@ impl Metrics {
     /// (ADR-034). A rise means a model needs `pricing set`.
     pub fn record_unpriced(&self) {
         self.counters().unpriced_requests += 1;
+    }
+
+    /// Counts a request refused because its key's budget is spent
+    /// (ADR-035).
+    pub fn record_budget_exceeded(&self) {
+        self.counters().budget_exceeded += 1;
     }
 
     /// The Prometheus text exposition format.
@@ -142,6 +149,13 @@ impl Metrics {
             "unpriced_requests_total {}",
             counters.unpriced_requests
         );
+
+        header(
+            &mut page,
+            "budget_exceeded_total",
+            "Requests refused because a key's monthly budget was spent.",
+        );
+        let _ = writeln!(page, "budget_exceeded_total {}", counters.budget_exceeded);
         page
     }
 }

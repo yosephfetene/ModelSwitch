@@ -50,11 +50,17 @@
 -   Each API key has a rate limit, checked right after authentication
     and before any other work. Counters are in memory and per server,
     so a restart refills them and several servers each apply the limit
-    (ADR-031). Budgets are a separate, durable control.
+    (ADR-031). Budgets are a separate, durable control (ADR-035).
 -   Each API key may have a fixed number of requests running at once;
     past that, requests are refused immediately rather than queued. The
     server's total is therefore at most keys × seats, so creating keys
     raises it (ADR-032).
+-   A key can have a monthly budget in USD, checked before each provider
+    call against recorded spending. It is firm, not exact: requests
+    already running can take a key slightly over. It tracks known
+    spending only, so a real bill can be higher, and a key with no budget
+    is unlimited. If the check cannot run, the request is refused
+    (ADR-035).
 -   `GET /metrics` is served only on a separate internal listener
     (`metrics.bind`), never on the public port. It has no API key, so
     that address must stay off the public network (ADR-030).

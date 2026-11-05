@@ -148,7 +148,8 @@ may have occurred.
 budgets arrive (Stage 3), estimates are added in separate `estimated_*`
 columns with an `estimate_method`, used only for budget enforcement and
 counting timeouts conservatively. Cost is always an estimate
-(`estimated_cost`) tied to a `pricing_version`.
+(`estimated_cost`) tied to a `pricing_version`. ADR-035 later decided that
+budgets need no estimated token columns.
 
 **Consequences:** Stored usage is always either a provider fact or
 explicitly unknown. Budgets before Stage 3 cannot account for unreported
@@ -768,3 +769,49 @@ they go stale unless an operator updates them. Totals leave out unpriced
 requests and run low when failed attempts were billed, most likely during
 provider trouble; `request_attempts` shows which requests had failed
 attempts. Budgets must decide how to treat both gaps.
+
+## ADR-035 --- Monthly budgets: firm, per key, checked before each call
+
+**Status:** Accepted. Replaces ADR-010's plan for `estimated_*` token
+columns.
+
+**Context:** Rate and concurrency limits bound speed, not money, so a
+leaked key could spend without limit while staying inside both. FR-12
+requires budget enforcement to document its consistency and failure
+behavior. A request's cost is only known after it finishes, but the
+decision to allow it comes before.
+
+**Decision:** Each key may have a `monthly_budget_usd`, set with `keys
+budget`; NULL means no budget, so existing keys are unaffected. A budget
+covers a calendar month in UTC. Spending is the sum of the key's
+`estimated_cost` this month by `created_at`, read from `request_records`,
+so nothing is stored twice and a restart loses nothing. The check runs
+after model resolution and before any provider call, in one query, under
+`accounting_timeout`. Spending at or over the budget gets `429
+budget_exceeded`, with `Retry-After` counting down to the next month, and
+increments `budget_exceeded_total`. A budgeted key whose candidates are
+not all currently priced gets `422 model_not_priced`, because spending it
+cannot see would silently bypass the budget; a budget that is already
+spent is reported first. Refused requests reach no provider and write no
+record. If the check fails or times out, the request is refused with
+`503` (ADR-009). Changing a budget applies from the next request.
+
+**Consistency guarantees:** A budget is firm, not exact. The check is not
+atomic with the spending, so requests running at the same moment all see
+the same total, and the request that crosses the limit completes. A key
+can overshoot by the cost of the requests already running: at most
+`concurrency.per_key` per server. All servers read the same records, so
+none can reset or hide spending. Reservations were rejected: they need a
+guessed worst-case cost, refuse clients who have budget left, and leave
+money stuck after a crash.
+
+**Consequences:** A budget tracks known spending, so a real bill can be
+higher. Failed attempts report no tokens and an answer without usage has
+no cost, so neither is counted, though the rate and concurrency limits
+still bound them. A forgotten price stops a budgeted key until `pricing
+set` is run, and every candidate needs a price, so a missing fallback price
+is found at once instead of during an outage. A key can spend up to twice
+its budget across a month boundary. A key with no budget is unlimited, so
+capping a total bill needs a budget on every key. Each budgeted request
+sums the key's records for the month; a running total can replace that if
+volumes make it slow. There is no server-wide budget yet.

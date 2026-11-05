@@ -2,8 +2,8 @@
 //!
 //! Order of work, cheapest and safest first: authentication (route
 //! layer), then body size, content type, and JSON validation, then model
-//! resolution. Only a fully valid request reaches a provider. The
-//! executor then tries the candidates, with retries and fallback, within
+//! resolution, then the key's budget. Only a fully valid request within
+//! its budget reaches a provider. The executor then tries the candidates, with retries and fallback, within
 //! the attempt and time limits (ADR-028).
 //!
 //! Every request that reaches a provider gets a request record, written
@@ -25,13 +25,15 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::accounting::{Cost, Outcome, RequestRecord, attempt_records, outcome_of};
 use crate::api::auth::AuthenticatedKey;
 use crate::api::error::ApiError;
 use crate::api::request_context::{ClientRequestId, RequestId};
 use crate::app::AppState;
-use crate::domain::{GenerateRequest, Generation, Usage, UsageSource};
+use crate::budget::BudgetDecision;
+use crate::domain::{GenerateRequest, Generation, Target, Usage, UsageSource};
 use crate::reliability::{Attempt, AttemptFailure, Execution, execute};
 
 /// Set to `failed` when the request record could not be written
@@ -136,6 +138,10 @@ async fn generate(
         return ApiError::Internal.into_response();
     };
 
+    if let Err(error) = check_budget(&state, key.id, &targets).await {
+        return error.into_response();
+    }
+
     let request = GenerateRequest {
         input: body.input,
         max_output_tokens: body.max_output_tokens,
@@ -219,6 +225,36 @@ async fn generate(
             .insert(ACCOUNTING_HEADER, HeaderValue::from_static("failed"));
     }
     response
+}
+
+/// Checks the key's budget under a deadline. Fails closed: this runs
+/// before any provider call, so a check that cannot finish refuses the
+/// request (ADR-009, ADR-035).
+async fn check_budget(state: &AppState, key: Uuid, targets: &[Target]) -> Result<(), ApiError> {
+    let check = state.budgets.check(key, targets);
+    match tokio::time::timeout(state.accounting_timeout, check).await {
+        Ok(Ok(BudgetDecision::Allowed)) => Ok(()),
+        Ok(Ok(BudgetDecision::Exceeded { retry_after_secs })) => {
+            tracing::info!("generate: budget exceeded");
+            state.metrics.record_budget_exceeded();
+            Err(ApiError::BudgetExceeded { retry_after_secs })
+        }
+        Ok(Ok(BudgetDecision::Unpriced)) => {
+            tracing::warn!("generate: budgeted key asked for a model with no price");
+            Err(ApiError::ModelNotPriced)
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "generate: budget check failed");
+            Err(ApiError::ServiceUnavailable)
+        }
+        Err(_) => {
+            tracing::warn!(
+                timeout_ms = state.accounting_timeout.as_millis() as u64,
+                "generate: budget check timed out"
+            );
+            Err(ApiError::ServiceUnavailable)
+        }
+    }
 }
 
 /// One line per failed attempt. Provider names and codes stop here and in

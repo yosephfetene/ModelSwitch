@@ -24,8 +24,9 @@ use uuid::Uuid;
 
 use modelswitch::accounting::{Cost, RecordStore, RecordStoreError, RequestRecord};
 use modelswitch::auth::api_key::{KeyEnvironment, KeyHash, NewApiKey};
+use modelswitch::budget::{BudgetDecision, BudgetStore, BudgetStoreError};
 use modelswitch::concurrency::ConcurrencyLimiter;
-use modelswitch::domain::{GenerateRequest, Generation, Provider, ProviderError, Usage};
+use modelswitch::domain::{GenerateRequest, Generation, Provider, ProviderError, Target, Usage};
 use modelswitch::providers::Registry;
 use modelswitch::rate_limit::{RateLimit, RateLimiter, TokenBucketLimiter};
 use modelswitch::reliability::Limits;
@@ -263,7 +264,67 @@ impl RecordStore for FakeRecordStore {
     }
 }
 
+/// What a `FakeBudgetStore` does when asked.
+#[derive(Clone, Copy)]
+pub enum BudgetMode {
+    Decide(BudgetDecision),
+    Down,
+    Hang,
+}
+
+/// One budget check: the key and the targets it asked about.
+pub type BudgetCall = (Uuid, Vec<Target>);
+
+/// A budget store whose answer the test controls. Records every check.
+#[derive(Clone)]
+pub struct FakeBudgetStore {
+    mode: BudgetMode,
+    calls: Arc<Mutex<Vec<BudgetCall>>>,
+}
+
+impl FakeBudgetStore {
+    pub fn new(mode: BudgetMode) -> Self {
+        Self {
+            mode,
+            calls: Arc::default(),
+        }
+    }
+
+    pub fn calls(&self) -> Vec<BudgetCall> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl BudgetStore for FakeBudgetStore {
+    fn check<'a>(
+        &'a self,
+        key: Uuid,
+        targets: &'a [Target],
+    ) -> BoxFuture<'a, Result<BudgetDecision, BudgetStoreError>> {
+        self.calls.lock().unwrap().push((key, targets.to_vec()));
+        let mode = self.mode;
+        Box::pin(async move {
+            match mode {
+                BudgetMode::Decide(decision) => Ok(decision),
+                BudgetMode::Down => Err(BudgetStoreError(SENSITIVE_ERROR.to_owned())),
+                BudgetMode::Hang => std::future::pending().await,
+            }
+        })
+    }
+}
+
+/// Allows everything, so only tests about budgets ever meet one.
+pub fn no_budgets() -> Arc<dyn BudgetStore> {
+    Arc::new(FakeBudgetStore::new(BudgetMode::Decide(
+        BudgetDecision::Allowed,
+    )))
+}
+
 pub const ACCOUNTING_TIMEOUT: Duration = Duration::from_secs(1);
+/// For tests against a real PostgreSQL: many test databases run at once,
+/// so a production-sized deadline could fail them on a busy machine.
+/// Deadlines themselves are tested with fakes on a paused clock.
+pub const REAL_DATABASE_TIMEOUT: Duration = Duration::from_secs(30);
 pub const REQUEST_LIMITS: Limits = Limits {
     max_attempts: 3,
     request_timeout: Duration::from_secs(60),
@@ -300,6 +361,7 @@ pub fn state_with_records(
         db_check_timeout: DB_CHECK_TIMEOUT,
         keys: Arc::new(keys),
         auth_timeout: AUTH_TIMEOUT,
+        budgets: no_budgets(),
         records: Arc::new(records),
         accounting_timeout: ACCOUNTING_TIMEOUT,
         limits: REQUEST_LIMITS,

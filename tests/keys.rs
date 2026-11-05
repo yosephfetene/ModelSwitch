@@ -305,6 +305,96 @@ async fn the_schema_rejects_an_expiry_before_creation(pool: PgPool) {
     assert!(result.is_err(), "an impossible expiry was stored");
 }
 
+async fn set_budget(pool: &PgPool, id: Uuid, budget: Option<&str>) -> anyhow::Result<String> {
+    let mut out = Vec::new();
+    keys::set_budget(pool, id, budget, &mut out).await?;
+    Ok(String::from_utf8(out).unwrap())
+}
+
+#[sqlx::test]
+async fn a_new_key_has_no_budget(pool: PgPool) {
+    create(&pool, "laptop").await;
+
+    let listing = list(&pool).await;
+
+    let line = listing.lines().last().unwrap();
+    assert!(line.contains("none"), "{line}");
+}
+
+#[sqlx::test]
+async fn a_budget_can_be_set_changed_and_cleared(pool: PgPool) {
+    create(&pool, "laptop").await;
+    let id = only_key_id(&pool).await;
+
+    let out = set_budget(&pool, id, Some("20.50")).await.unwrap();
+    assert!(out.contains("$20.50 per month"), "{out}");
+    assert!(list(&pool).await.contains("20.50"));
+
+    set_budget(&pool, id, Some("5")).await.unwrap();
+    let listing = list(&pool).await;
+    let line = listing.lines().last().unwrap();
+    assert!(line.contains(" 5 "), "{line}");
+
+    let out = set_budget(&pool, id, None).await.unwrap();
+    assert!(out.contains("no budget"), "{out}");
+    let listing = list(&pool).await;
+    assert!(
+        listing.lines().last().unwrap().contains("none"),
+        "{listing}"
+    );
+}
+
+#[sqlx::test]
+async fn a_budget_only_changes_its_own_key(pool: PgPool) {
+    create(&pool, "laptop").await;
+    let id = only_key_id(&pool).await;
+    create(&pool, "ci runner").await;
+
+    set_budget(&pool, id, Some("20")).await.unwrap();
+
+    let budgeted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM client_api_keys WHERE monthly_budget_usd IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(budgeted, 1);
+}
+
+#[sqlx::test]
+async fn budget_rejects_bad_amounts_and_unknown_keys(pool: PgPool) {
+    create(&pool, "laptop").await;
+    let id = only_key_id(&pool).await;
+
+    for amount in ["NaN", "-1", "1e5", ""] {
+        assert!(
+            set_budget(&pool, id, Some(amount)).await.is_err(),
+            "{amount:?}"
+        );
+    }
+    let error = set_budget(&pool, Uuid::now_v7(), Some("1"))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("no key with id"), "{error}");
+    assert!(list(&pool).await.lines().last().unwrap().contains("none"));
+}
+
+#[sqlx::test]
+async fn the_schema_rejects_impossible_budgets(pool: PgPool) {
+    create(&pool, "laptop").await;
+
+    for amount in ["-1", "NaN", "1000000"] {
+        let result =
+            sqlx::query("UPDATE client_api_keys SET monthly_budget_usd = $1::text::numeric")
+                .bind(amount)
+                .execute(&pool)
+                .await;
+
+        assert!(result.is_err(), "{amount} was stored");
+    }
+}
+
 #[sqlx::test]
 async fn migrations_can_run_again_safely(pool: PgPool) {
     storage::MIGRATOR.run(&pool).await.unwrap();

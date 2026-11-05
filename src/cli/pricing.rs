@@ -6,7 +6,7 @@ use anyhow::{Context, bail};
 use sqlx::PgPool;
 
 use crate::domain::Target;
-use crate::pricing::{PriceSource, PriceUsd};
+use crate::pricing::{PriceSource, UsdAmount};
 use crate::routing::Catalog;
 use crate::storage::pricing;
 
@@ -30,8 +30,8 @@ pub async fn set(
     price: SetPrice<'_>,
     out: &mut impl Write,
 ) -> anyhow::Result<()> {
-    let input = PriceUsd::parse(price.input_per_million)?;
-    let output = PriceUsd::parse(price.output_per_million)?;
+    let input = UsdAmount::parse(price.input_per_million)?;
+    let output = UsdAmount::parse(price.output_per_million)?;
     let source = PriceSource::parse(price.source)?;
     let target = Target {
         provider: price.provider.to_owned(),

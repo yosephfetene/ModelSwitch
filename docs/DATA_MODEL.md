@@ -15,6 +15,9 @@ Implemented in `migrations/` (Stage 1):
 -   `created_at`, `revoked_at`
 -   `expires_at` --- optional; NULL means the key never expires
     (ADR-033)
+-   `monthly_budget_usd` --- optional exact limit per calendar month
+    (UTC); NULL means no budget. Spending is not stored: it is the sum
+    of the key's `estimated_cost` this month (ADR-035)
 -   Status is derived: revoked when `revoked_at` is set, otherwise
     expired once `expires_at` has passed, otherwise active (ADR-022).
     An optional `rate_limit_policy_id` arrives later. Until a key can
@@ -59,9 +62,8 @@ Prompts and completions are never stored. If that is ever added, define
 opt-in, access controls, retention, and deletion behavior first.
 
 Missing usage stays null with `usage_source = unavailable`; it is never
-fabricated. Stage 3 adds separate `estimated_input_tokens`,
-`estimated_output_tokens`, and `estimate_method` columns used only for
-budget enforcement (ADR-010).
+fabricated. Budgets count only `estimated_cost`, so no estimated token
+columns exist (ADR-035).
 
 ### Accounting failures
 

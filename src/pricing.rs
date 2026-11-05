@@ -1,6 +1,6 @@
-//! Validated values for versioned prices (ADR-034).
+//! Validated values for prices and budgets (ADR-034, ADR-035).
 //!
-//! Prices stay text until PostgreSQL's exact `numeric` type holds them, so
+//! Amounts stay text until PostgreSQL's exact `numeric` type holds them, so
 //! `0.10` never passes through floating point. Only plain decimals are
 //! accepted: `numeric` would also take `NaN` and `1e5`.
 
@@ -8,15 +8,15 @@ const INTEGER_DIGITS_MAX: usize = 6;
 const FRACTION_DIGITS_MAX: usize = 9;
 const SOURCE_MAX_CHARS: usize = 2048;
 
-/// A price in USD per million tokens, such as `0.10`.
+/// An amount of USD, such as `0.10`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PriceUsd(String);
+pub struct UsdAmount(String);
 
-impl PriceUsd {
-    pub fn parse(price: &str) -> Result<Self, PricingError> {
-        let (integer, fraction) = match price.split_once('.') {
+impl UsdAmount {
+    pub fn parse(amount: &str) -> Result<Self, PricingError> {
+        let (integer, fraction) = match amount.split_once('.') {
             Some((integer, fraction)) => (integer, Some(fraction)),
-            None => (price, None),
+            None => (amount, None),
         };
         let digits = |text: &str, max: usize| {
             (1..=max).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_digit())
@@ -24,9 +24,9 @@ impl PriceUsd {
         if digits(integer, INTEGER_DIGITS_MAX)
             && fraction.is_none_or(|fraction| digits(fraction, FRACTION_DIGITS_MAX))
         {
-            Ok(Self(price.to_owned()))
+            Ok(Self(amount.to_owned()))
         } else {
-            Err(PricingError::InvalidPrice)
+            Err(PricingError::InvalidAmount)
         }
     }
 
@@ -58,10 +58,10 @@ impl PriceSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PricingError {
     #[error(
-        "price must be a plain decimal such as 0.10, with at most 6 digits before the point \
+        "amount must be a plain decimal such as 0.10, with at most 6 digits before the point \
          and 9 after"
     )]
-    InvalidPrice,
+    InvalidAmount,
     #[error("price source must be 1-2048 characters with no control characters")]
     InvalidSource,
 }
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn plain_decimals_are_prices() {
         for price in ["0", "3", "0.10", "999999.999999999"] {
-            assert_eq!(PriceUsd::parse(price).unwrap().as_str(), price);
+            assert_eq!(UsdAmount::parse(price).unwrap().as_str(), price);
         }
     }
 
@@ -99,8 +99,8 @@ mod tests {
             "0.1234567890",
         ] {
             assert_eq!(
-                PriceUsd::parse(price),
-                Err(PricingError::InvalidPrice),
+                UsdAmount::parse(price),
+                Err(PricingError::InvalidAmount),
                 "{price:?}"
             );
         }
