@@ -1,4 +1,5 @@
 pub mod api_keys;
+pub mod pricing;
 pub mod request_records;
 
 use std::time::Duration;

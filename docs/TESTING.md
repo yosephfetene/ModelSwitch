@@ -4,8 +4,10 @@
 
 Test logic without network/database dependencies: request validation and
 limits, capability matching, deterministic routing, retry classification
-and bounds, cost calculation and pricing-version selection, HTTP error
-mapping, and redaction helpers.
+and bounds, price validation, HTTP error mapping, and redaction helpers.
+Cost calculation and pricing-version selection run as exact `numeric`
+arithmetic in the database, so they are tested against PostgreSQL
+(ADR-034).
 
 ## Provider adapter contract tests
 

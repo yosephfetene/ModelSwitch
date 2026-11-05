@@ -26,7 +26,7 @@ use axum::routing::post;
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::accounting::{Outcome, RequestRecord, attempt_records, outcome_of};
+use crate::accounting::{Cost, Outcome, RequestRecord, attempt_records, outcome_of};
 use crate::api::auth::AuthenticatedKey;
 use crate::api::error::ApiError;
 use crate::api::request_context::{ClientRequestId, RequestId};
@@ -196,10 +196,15 @@ async fn generate(
 
     // The record is written before responding, so the response can say
     // whether it was; the answer is delivered either way (ADR-009).
-    let recorded = write_record(&state, &record).await;
+    let cost = write_record(&state, &record).await;
     state.metrics.record_request(&record);
-    if !recorded {
-        state.metrics.record_accounting_failure();
+    match cost {
+        Some(Cost::Unpriced) => {
+            tracing::info!(%target, "generate: no price in effect, cost unknown");
+            state.metrics.record_unpriced();
+        }
+        Some(Cost::Estimated | Cost::NoUsage) => {}
+        None => state.metrics.record_accounting_failure(),
     }
     let mut response = match reply {
         Ok(reply) => Json(reply).into_response(),
@@ -208,7 +213,7 @@ async fn generate(
     response
         .headers_mut()
         .insert(ATTEMPTS_HEADER, HeaderValue::from(attempts.len()));
-    if !recorded {
+    if cost.is_none() {
         response
             .headers_mut()
             .insert(ACCOUNTING_HEADER, HeaderValue::from_static("failed"));
@@ -235,13 +240,13 @@ fn log_failed_attempts(attempts: &[Attempt]) {
 
 /// Writes the record under the accounting deadline. A failure is logged
 /// (`accounting_write_failed`, with the request ID from the span) and
-/// reported to the caller, never turned into an error response.
-async fn write_record(state: &AppState, record: &RequestRecord) -> bool {
+/// reported to the caller as `None`, never turned into an error response.
+async fn write_record(state: &AppState, record: &RequestRecord) -> Option<Cost> {
     match tokio::time::timeout(state.accounting_timeout, state.records.insert(record)).await {
-        Ok(Ok(())) => true,
+        Ok(Ok(cost)) => Some(cost),
         Ok(Err(error)) => {
             tracing::error!(%error, outcome = record.outcome.as_str(), "accounting_write_failed");
-            false
+            None
         }
         Err(_) => {
             tracing::error!(
@@ -249,7 +254,7 @@ async fn write_record(state: &AppState, record: &RequestRecord) -> bool {
                 outcome = record.outcome.as_str(),
                 "accounting_write_failed: timed out"
             );
-            false
+            None
         }
     }
 }

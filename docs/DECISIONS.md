@@ -734,3 +734,37 @@ can follow once warnings exist. A dev key cannot authenticate on a live
 server only because each environment has its own database and so its own
 keys. Sharing one database across environments would remove that protection
 with nothing to catch it, so it must not be done.
+
+## ADR-034 --- Versioned prices; cost from reported usage only
+
+**Status:** Accepted.
+
+**Context:** ADR-004 and ADR-010 require cost to be a labeled estimate
+tied to a pricing version. Where prices live, what to do without a price,
+and how to treat failed attempts were open.
+
+**Decision:** Prices live in `pricing_versions`, in USD per million
+tokens, and are set with `modelswitch pricing set`, which needs a source
+and a configured model. Setting a price closes the previous row at the
+same moment; rows are never edited. A request's `estimated_cost` is its
+reported input and output tokens × the price in effect when it started,
+and `pricing_version` names that price. It covers only the attempt that
+answered, because failed attempts report no tokens. If no price applies,
+or either token count is missing, both columns stay null: unknown is
+never recorded as zero, while a price of zero is a deliberate real zero.
+The request is served either way. A request with usage but no price
+increments `unpriced_requests_total`. The estimate is calculated in
+PostgreSQL inside the record's transaction: `numeric` is exact, so no
+decimal library or floating point is involved, the price and `created_at`
+share one clock, and the accounting deadline already covers it. Prices
+are not exposed to clients.
+
+**Consequences:** An estimate can be reproduced from its record and price
+row, and a price change never alters old records. Because the estimate is
+in SQL, cost calculation and price selection are tested against
+PostgreSQL, not as pure unit tests. Prices are not reviewed in pull
+requests, and each environment sets its own; nothing fetches them, so
+they go stale unless an operator updates them. Totals leave out unpriced
+requests and run low when failed attempts were billed, most likely during
+provider trouble; `request_attempts` shows which requests had failed
+attempts. Budgets must decide how to treat both gaps.

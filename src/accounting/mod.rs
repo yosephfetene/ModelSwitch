@@ -178,6 +178,18 @@ impl RequestRecord {
     }
 }
 
+/// What became of a written record's cost estimate (ADR-034).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cost {
+    /// Reported tokens × the price in effect; stored with its version.
+    Estimated,
+    /// Usage was reported, but no price was in effect: the cost is unknown.
+    Unpriced,
+    /// The provider did not report both token counts, so the cost is
+    /// unknown whatever the price (ADR-010).
+    NoUsage,
+}
+
 /// Why a record could not be written. For logs only.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -189,7 +201,7 @@ pub trait RecordStore: Send + Sync {
     fn insert<'a>(
         &'a self,
         record: &'a RequestRecord,
-    ) -> BoxFuture<'a, Result<(), RecordStoreError>>;
+    ) -> BoxFuture<'a, Result<Cost, RecordStoreError>>;
 }
 
 #[cfg(test)]

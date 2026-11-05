@@ -46,8 +46,14 @@ that reached a provider; requests rejected before that get none.
     `reported_total_tokens` --- nullable provider facts (bigint)
 -   `usage_source` --- provider_reported, unavailable
 -   `created_at` (start), `completed_at` (insert time)
+-   `estimated_cost` --- nullable exact USD estimate: reported tokens
+    × the price in effect when the request started. Null means unknown:
+    no price, or incomplete usage. It covers only the attempt that
+    answered, so it runs low if failed attempts were billed (ADR-034).
+-   `pricing_version` --- the `pricing_versions` row used; set exactly
+    when `estimated_cost` is
 -   Later: `routing_policy_version`, `routing_reason` (with routing
-    policies), `estimated_cost`, `pricing_version` (Stage 3)
+    policies)
 
 Prompts and completions are never stored. If that is ever added, define
 opt-in, access controls, retention, and deletion behavior first.
@@ -97,13 +103,17 @@ database is decided with routing policy storage.
 
 ## `pricing_versions`
 
+Implemented in `migrations/` (Stage 3):
+
 -   `id`, `provider`, `model`
--   input/output price per documented unit
--   `effective_from`, `effective_to`
+-   `input_usd_per_million`, `output_usd_per_million` --- exact numerics
+-   `effective_from`, `effective_to` --- in effect from the first up to,
+    not including, the second; null means current, and each model has
+    at most one current price
 -   `source_reference`, `retrieved_at`
 
-Pricing changes over time. Preserve historical versions so old estimates
-remain explainable.
+Pricing changes over time. `modelswitch pricing set` closes the old row
+and adds a new one, so old estimates remain explainable (ADR-034).
 
 ## Index candidates
 
