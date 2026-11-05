@@ -22,7 +22,7 @@ use tracing_subscriber::fmt::MakeWriter;
 use secrecy::ExposeSecret;
 use uuid::Uuid;
 
-use modelswitch::accounting::{RecordStore, RecordStoreError, RequestRecord};
+use modelswitch::accounting::{Cost, RecordStore, RecordStoreError, RequestRecord};
 use modelswitch::auth::api_key::{KeyEnvironment, KeyHash, NewApiKey};
 use modelswitch::concurrency::ConcurrencyLimiter;
 use modelswitch::domain::{GenerateRequest, Generation, Provider, ProviderError, Usage};
@@ -248,13 +248,13 @@ impl RecordStore for FakeRecordStore {
     fn insert<'a>(
         &'a self,
         record: &'a RequestRecord,
-    ) -> BoxFuture<'a, Result<(), RecordStoreError>> {
+    ) -> BoxFuture<'a, Result<Cost, RecordStoreError>> {
         let mode = *self.mode.lock().unwrap();
         Box::pin(async move {
             match mode {
                 DbMode::Up => {
                     self.records.lock().unwrap().push(record.clone());
-                    Ok(())
+                    Ok(Cost::NoUsage)
                 }
                 DbMode::Down => Err(RecordStoreError(SENSITIVE_ERROR.to_owned())),
                 DbMode::Hang => std::future::pending().await,

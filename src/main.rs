@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use modelswitch::auth::api_key::KeyEnvironment;
 use modelswitch::cli::keys::CreateOptions;
+use modelswitch::cli::pricing::SetPrice;
 use modelswitch::concurrency::ConcurrencyLimiter;
 use modelswitch::config::Config;
 use modelswitch::providers::Registry;
@@ -43,6 +44,9 @@ enum Command {
     /// Manage client API keys.
     #[command(subcommand)]
     Keys(KeysCommand),
+    /// Manage the prices behind cost estimates.
+    #[command(subcommand)]
+    Pricing(PricingCommand),
 }
 
 #[derive(Subcommand)]
@@ -69,6 +73,30 @@ enum KeysCommand {
     },
 }
 
+#[derive(Subcommand)]
+enum PricingCommand {
+    /// Set a model's current price, closing any previous one.
+    Set {
+        /// A configured provider, such as `groq`.
+        #[arg(long)]
+        provider: String,
+        /// A model configured for that provider.
+        #[arg(long)]
+        model: String,
+        /// USD per million input tokens, such as 0.10.
+        #[arg(long, value_name = "USD")]
+        input_per_million: String,
+        /// USD per million output tokens, such as 0.50.
+        #[arg(long, value_name = "USD")]
+        output_per_million: String,
+        /// Where the price came from, such as the provider's pricing page.
+        #[arg(long)]
+        source: String,
+    },
+    /// List every price, current and past.
+    List,
+}
+
 /// Upper bound for one operator command, including database waits.
 const COMMAND_DEADLINE: Duration = Duration::from_secs(30);
 
@@ -85,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Serve => serve(config).await,
         Command::Migrate => with_deadline(migrate(config)).await,
         Command::Keys(command) => with_deadline(keys(config, command)).await,
+        Command::Pricing(command) => with_deadline(pricing(config, command)).await,
     }
 }
 
@@ -126,6 +155,30 @@ async fn keys(config: Config, command: KeysCommand) -> anyhow::Result<()> {
         }
         KeysCommand::List => cli::keys::list(&pool, Utc::now(), &mut out).await,
         KeysCommand::Revoke { id } => cli::keys::revoke(&pool, id, &mut out).await,
+    }
+}
+
+async fn pricing(config: Config, command: PricingCommand) -> anyhow::Result<()> {
+    let pool = storage::connect_lazy(&config.database).context("invalid database configuration")?;
+    let mut out = std::io::stdout().lock();
+    match command {
+        PricingCommand::Set {
+            provider,
+            model,
+            input_per_million,
+            output_per_million,
+            source,
+        } => {
+            let price = SetPrice {
+                provider: &provider,
+                model: &model,
+                input_per_million: &input_per_million,
+                output_per_million: &output_per_million,
+                source: &source,
+            };
+            cli::pricing::set(&pool, &config.catalog(), price, &mut out).await
+        }
+        PricingCommand::List => cli::pricing::list(&pool, &mut out).await,
     }
 }
 

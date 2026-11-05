@@ -3,7 +3,7 @@
 
 use sqlx::{PgPool, Postgres, Transaction};
 
-use crate::accounting::{AttemptRecord, RecordStore, RecordStoreError, RequestRecord};
+use crate::accounting::{AttemptRecord, Cost, RecordStore, RecordStoreError, RequestRecord};
 use crate::storage::BoxFuture;
 
 /// `RecordStore` backed by PostgreSQL. The caller bounds each write with
@@ -20,14 +20,16 @@ impl PgRecordStore {
     /// The request and its attempts in one transaction, so neither can
     /// exist without the other. If the caller's deadline drops this
     /// future, the transaction rolls back.
-    async fn write(&self, record: &RequestRecord) -> Result<(), sqlx::Error> {
+    async fn write(&self, record: &RequestRecord) -> Result<Cost, sqlx::Error> {
         let mut transaction = self.pool.begin().await?;
         insert_request(&mut transaction, record).await?;
         for (index, attempt) in record.attempts.iter().enumerate() {
             let number = i32::try_from(index + 1).unwrap_or(i32::MAX);
             insert_attempt(&mut transaction, &record.request_id, number, attempt).await?;
         }
-        transaction.commit().await
+        let cost = estimate_cost(&mut transaction, record).await?;
+        transaction.commit().await?;
+        Ok(cost)
     }
 }
 
@@ -35,7 +37,7 @@ impl RecordStore for PgRecordStore {
     fn insert<'a>(
         &'a self,
         record: &'a RequestRecord,
-    ) -> BoxFuture<'a, Result<(), RecordStoreError>> {
+    ) -> BoxFuture<'a, Result<Cost, RecordStoreError>> {
         Box::pin(async move {
             self.write(record)
                 .await
@@ -80,6 +82,39 @@ async fn insert_request(
     .execute(&mut **transaction)
     .await
     .map(|_| ())
+}
+
+/// Prices a stored request from its reported tokens and the price in
+/// effect when it started (ADR-034). In the database because `numeric`
+/// is exact, and `created_at` and the prices share its clock. Multiplying
+/// by 0.000001, unlike dividing, never rounds.
+async fn estimate_cost(
+    transaction: &mut Transaction<'_, Postgres>,
+    record: &RequestRecord,
+) -> Result<Cost, sqlx::Error> {
+    if record.usage.input_tokens.is_none() || record.usage.output_tokens.is_none() {
+        return Ok(Cost::NoUsage);
+    }
+    let priced = sqlx::query(
+        "UPDATE request_records r \
+         SET pricing_version = p.id, \
+             estimated_cost = (r.reported_input_tokens * p.input_usd_per_million \
+                 + r.reported_output_tokens * p.output_usd_per_million) * 0.000001 \
+         FROM pricing_versions p \
+         WHERE r.id = $1 \
+           AND p.provider = r.selected_provider AND p.model = r.selected_model \
+           AND p.effective_from <= r.created_at \
+           AND (p.effective_to IS NULL OR r.created_at < p.effective_to)",
+    )
+    .bind(&record.request_id)
+    .execute(&mut **transaction)
+    .await?
+    .rows_affected();
+    Ok(if priced == 0 {
+        Cost::Unpriced
+    } else {
+        Cost::Estimated
+    })
 }
 
 async fn insert_attempt(

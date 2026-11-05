@@ -33,6 +33,7 @@ src/
   cli/
     mod.rs
     keys.rs            # modelswitch keys create|list|revoke
+    pricing.rs         # modelswitch pricing set|list
   domain/
     mod.rs
     request.rs

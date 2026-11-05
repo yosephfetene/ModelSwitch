@@ -24,6 +24,7 @@ struct Counters {
     accounting_failures: u64,
     rate_limited: u64,
     concurrency_limited: u64,
+    unpriced_requests: u64,
 }
 
 /// Totals since the process started. Shared by the request path, which
@@ -68,6 +69,12 @@ impl Metrics {
     /// (ADR-032). A rise usually means a provider has slowed down.
     pub fn record_concurrency_limited(&self) {
         self.counters().concurrency_limited += 1;
+    }
+
+    /// Counts a request with reported usage but no price in effect
+    /// (ADR-034). A rise means a model needs `pricing set`.
+    pub fn record_unpriced(&self) {
+        self.counters().unpriced_requests += 1;
     }
 
     /// The Prometheus text exposition format.
@@ -123,6 +130,17 @@ impl Metrics {
             page,
             "concurrency_limited_total {}",
             counters.concurrency_limited
+        );
+
+        header(
+            &mut page,
+            "unpriced_requests_total",
+            "Requests with reported usage but no price, so no cost estimate.",
+        );
+        let _ = writeln!(
+            page,
+            "unpriced_requests_total {}",
+            counters.unpriced_requests
         );
         page
     }

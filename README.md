@@ -96,6 +96,15 @@ Prerequisites: Rust (stable) and PostgreSQL 18.
     cargo run -- keys revoke <ID>
     ```
 
+    Cost estimates need a price for each model, in USD per million
+    tokens. Without one, a request's cost stays unknown:
+
+    ``` bash
+    cargo run -- pricing set --provider groq --model <MODEL> \
+      --input-per-million <USD> --output-per-million <USD> --source <URL>
+    cargo run -- pricing list
+    ```
+
     The key is printed once; only its SHA-256 hash is stored. The
     server never migrates on its own (ADR-022), so run `migrate` after
     pulling changes that add a migration.
