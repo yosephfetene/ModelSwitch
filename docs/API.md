@@ -129,8 +129,10 @@ Response:
     from every route, including errors; on errors it equals the body's
     `request_id`.
 -   `X-Client-Request-Id` --- echoed when the client sent a valid one.
--   `Retry-After` --- on `429 rate_limited`, the seconds to wait before
-    the key has capacity again. Each key has a token bucket: every authenticated
+-   `Retry-After` --- on `429 budget_exceeded`, the seconds until the next
+    calendar month (UTC), when the key's budget resets (ADR-035). On
+    `429 rate_limited`, the seconds to wait before the key has capacity
+    again. Each key has a token bucket: every authenticated
     request spends one token, even if it is then rejected as invalid;
     the gateway's own retries and fallback spend none (ADR-031). It is
     absent on `429 concurrency_limited`: nobody knows when a running
@@ -176,8 +178,10 @@ change. Codes implemented so far: `invalid_request` (400), `unauthorized`
 | Unknown route | 404 |
 | Route exists but not for this HTTP method | 405 |
 | Unknown alias/pin, no eligible provider, or unsupported capability | 422 |
+| Key has a budget, but a candidate model has no price (`model_not_priced`) | 422 |
 | Rate limit exceeded (`rate_limited`, with `Retry-After` in seconds) | 429 |
 | Too many requests running for this key (`concurrency_limited`, no `Retry-After`) | 429 |
+| Key's monthly budget is spent (`budget_exceeded`, with `Retry-After` in seconds) | 429 |
 | Unexpected gateway failure | 500 |
 | Upstream provider failure | 502 |
 | Dependency needed before the provider call is unavailable (for example the database) | 503 |

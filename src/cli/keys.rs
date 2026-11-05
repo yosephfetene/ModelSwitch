@@ -1,4 +1,4 @@
-//! `modelswitch keys create|list|revoke` (ADR-012).
+//! `modelswitch keys create|list|revoke|budget` (ADR-012, ADR-035).
 //!
 //! Output goes to the given writer (stdout in production, a buffer in
 //! tests). The plaintext key is written exactly once, by `create`, and
@@ -13,6 +13,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::auth::api_key::{ExpiryDays, KeyEnvironment, KeyName, NewApiKey};
+use crate::pricing::UsdAmount;
 use crate::storage::api_keys::{self, RevokeOutcome};
 
 const TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -66,13 +67,13 @@ pub async fn list(pool: &PgPool, now: DateTime<Utc>, out: &mut impl Write) -> an
 
     writeln!(
         out,
-        "{:<36}  {:<12}  {:<8}  {:<20}  {:<20}  NAME",
-        "ID", "PREFIX", "STATUS", "CREATED (UTC)", "EXPIRES (UTC)"
+        "{:<36}  {:<12}  {:<8}  {:<20}  {:<20}  {:<18}  NAME",
+        "ID", "PREFIX", "STATUS", "CREATED (UTC)", "EXPIRES (UTC)", "BUDGET ($/MONTH)"
     )?;
     for record in records {
         writeln!(
             out,
-            "{:<36}  {:<12}  {:<8}  {:<20}  {:<20}  {}",
+            "{:<36}  {:<12}  {:<8}  {:<20}  {:<20}  {:<18}  {}",
             record.id,
             record.key_prefix,
             record.status(now),
@@ -80,8 +81,39 @@ pub async fn list(pool: &PgPool, now: DateTime<Utc>, out: &mut impl Write) -> an
             record.expires_at.map_or("never".to_owned(), |expires_at| {
                 expires_at.format(TIME_FORMAT).to_string()
             }),
+            record.monthly_budget_usd.as_deref().unwrap_or("none"),
             record.name
         )?;
+    }
+    Ok(())
+}
+
+/// Sets the key's monthly budget in USD, or clears it with `None`.
+pub async fn set_budget(
+    pool: &PgPool,
+    id: Uuid,
+    monthly_usd: Option<&str>,
+    out: &mut impl Write,
+) -> anyhow::Result<()> {
+    let budget = monthly_usd.map(UsdAmount::parse).transpose()?;
+    let Some(record) = api_keys::set_budget(pool, id, budget.as_ref())
+        .await
+        .context("failed to store the budget")?
+    else {
+        bail!("no key with id {id}");
+    };
+    tracing::info!(key_id = %record.id, key_prefix = %record.key_prefix, "api key budget changed");
+    match record.monthly_budget_usd {
+        Some(budget) => writeln!(
+            out,
+            "Key {} ({}) now has a budget of ${budget} per month.",
+            record.id, record.key_prefix
+        )?,
+        None => writeln!(
+            out,
+            "Key {} ({}) now has no budget.",
+            record.id, record.key_prefix
+        )?,
     }
     Ok(())
 }

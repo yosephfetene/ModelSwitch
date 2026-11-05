@@ -6,7 +6,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::Target;
-use crate::pricing::{PriceSource, PriceUsd};
+use crate::pricing::{PriceSource, UsdAmount};
 
 /// A stored price as shown to operators. Prices are text so they print
 /// exactly as stored.
@@ -28,8 +28,8 @@ pub struct PriceRecord {
 pub async fn set(
     pool: &PgPool,
     target: &Target,
-    input: &PriceUsd,
-    output: &PriceUsd,
+    input: &UsdAmount,
+    output: &UsdAmount,
     source: &PriceSource,
 ) -> Result<PriceRecord, sqlx::Error> {
     let mut transaction = pool.begin().await?;

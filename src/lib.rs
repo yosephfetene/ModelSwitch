@@ -8,6 +8,7 @@ pub mod accounting;
 pub mod api;
 pub mod app;
 pub mod auth;
+pub mod budget;
 pub mod cli;
 pub mod concurrency;
 pub mod config;

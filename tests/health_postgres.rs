@@ -14,6 +14,7 @@ use modelswitch::rate_limit::{RateLimit, TokenBucketLimiter};
 use modelswitch::reliability::Limits;
 use modelswitch::storage::PgDatabaseCheck;
 use modelswitch::storage::api_keys::PgKeyStore;
+use modelswitch::storage::budgets::PgBudgetStore;
 use modelswitch::storage::request_records::PgRecordStore;
 use modelswitch::{AppState, build_router};
 
@@ -25,6 +26,7 @@ async fn ready_returns_ok_when_database_reachable(pool: PgPool) {
         db_check_timeout: Duration::from_secs(1),
         keys: Arc::new(PgKeyStore::new(pool.clone())),
         auth_timeout: Duration::from_secs(1),
+        budgets: Arc::new(PgBudgetStore::new(pool.clone())),
         records: Arc::new(PgRecordStore::new(pool)),
         accounting_timeout: Duration::from_secs(1),
         limits: Limits {

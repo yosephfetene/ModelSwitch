@@ -94,6 +94,7 @@ Prerequisites: Rust (stable) and PostgreSQL 18.
     cargo run -- keys create --name contractor --expires-in-days 30
     cargo run -- keys list
     cargo run -- keys revoke <ID>
+    cargo run -- keys budget <ID> --monthly-usd 20
     ```
 
     Cost estimates need a price for each model, in USD per million

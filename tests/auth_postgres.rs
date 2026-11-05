@@ -13,9 +13,7 @@ use axum::{Extension, Router};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use common::{
-    ACCOUNTING_TIMEOUT, AUTH_TIMEOUT, DB_CHECK_TIMEOUT, REQUEST_LIMITS, TestResponse, send,
-};
+use common::{DB_CHECK_TIMEOUT, REQUEST_LIMITS, TestResponse, send};
 use modelswitch::AppState;
 use modelswitch::api::auth::AuthenticatedKey;
 use modelswitch::app::{require_api_key, with_middleware};
@@ -30,9 +28,10 @@ fn app(pool: &PgPool) -> Router {
         db: Arc::new(PgDatabaseCheck::new(pool.clone())),
         db_check_timeout: DB_CHECK_TIMEOUT,
         keys: Arc::new(PgKeyStore::new(pool.clone())),
-        auth_timeout: AUTH_TIMEOUT,
+        auth_timeout: common::REAL_DATABASE_TIMEOUT,
+        budgets: common::no_budgets(),
         records: Arc::new(PgRecordStore::new(pool.clone())),
-        accounting_timeout: ACCOUNTING_TIMEOUT,
+        accounting_timeout: common::REAL_DATABASE_TIMEOUT,
         limits: REQUEST_LIMITS,
         metrics: Default::default(),
         rate_limiter: common::generous_rate_limiter(),

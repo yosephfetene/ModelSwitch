@@ -6,6 +6,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::auth::api_key::{ExpiryDays, KeyHash, KeyName, KeyStatus, NewApiKey};
+use crate::pricing::UsdAmount;
 use crate::storage::BoxFuture;
 
 /// A stored key as shown to operators. Deliberately has no hash field:
@@ -19,6 +20,8 @@ pub struct ApiKeyRecord {
     pub revoked_at: Option<DateTime<Utc>>,
     /// `None` means the key never expires.
     pub expires_at: Option<DateTime<Utc>>,
+    /// USD per calendar month, exactly as stored. `None` means no budget.
+    pub monthly_budget_usd: Option<String>,
 }
 
 impl ApiKeyRecord {
@@ -45,7 +48,8 @@ pub async fn insert(
     sqlx::query_as(
         "INSERT INTO client_api_keys (name, key_prefix, key_hash, expires_at) \
          VALUES ($1, $2, $3, now() + make_interval(days => $4)) \
-         RETURNING id, name, key_prefix, created_at, revoked_at, expires_at",
+         RETURNING id, name, key_prefix, created_at, revoked_at, expires_at, \
+                monthly_budget_usd::text AS monthly_budget_usd",
     )
     .bind(name.as_str())
     .bind(key.prefix())
@@ -58,7 +62,8 @@ pub async fn insert(
 /// All keys, oldest first (UUIDv7 IDs sort by creation time).
 pub async fn list(pool: &PgPool) -> Result<Vec<ApiKeyRecord>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, name, key_prefix, created_at, revoked_at, expires_at \
+        "SELECT id, name, key_prefix, created_at, revoked_at, expires_at, \
+                monthly_budget_usd::text AS monthly_budget_usd \
          FROM client_api_keys ORDER BY id",
     )
     .fetch_all(pool)
@@ -76,7 +81,8 @@ pub enum RevokeOutcome {
 pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<RevokeOutcome, sqlx::Error> {
     let revoked: Option<ApiKeyRecord> = sqlx::query_as(
         "UPDATE client_api_keys SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL \
-         RETURNING id, name, key_prefix, created_at, revoked_at, expires_at",
+         RETURNING id, name, key_prefix, created_at, revoked_at, expires_at, \
+                monthly_budget_usd::text AS monthly_budget_usd",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -86,7 +92,8 @@ pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<RevokeOutcome, sqlx::Erro
     }
 
     let existing: Option<ApiKeyRecord> = sqlx::query_as(
-        "SELECT id, name, key_prefix, created_at, revoked_at, expires_at \
+        "SELECT id, name, key_prefix, created_at, revoked_at, expires_at, \
+                monthly_budget_usd::text AS monthly_budget_usd \
          FROM client_api_keys WHERE id = $1",
     )
     .bind(id)
@@ -96,6 +103,24 @@ pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<RevokeOutcome, sqlx::Erro
         Some(record) => RevokeOutcome::AlreadyRevoked(record),
         None => RevokeOutcome::NotFound,
     })
+}
+
+/// Sets or, with `None`, clears the key's monthly budget. Returns `None`
+/// if there is no such key. It applies from the next request.
+pub async fn set_budget(
+    pool: &PgPool,
+    id: Uuid,
+    budget: Option<&UsdAmount>,
+) -> Result<Option<ApiKeyRecord>, sqlx::Error> {
+    sqlx::query_as(
+        "UPDATE client_api_keys SET monthly_budget_usd = $2::text::numeric WHERE id = $1 \
+         RETURNING id, name, key_prefix, created_at, revoked_at, expires_at, \
+                monthly_budget_usd::text AS monthly_budget_usd",
+    )
+    .bind(id)
+    .bind(budget.map(UsdAmount::as_str))
+    .fetch_optional(pool)
+    .await
 }
 
 /// What authentication needs to know about a presented key's hash.
@@ -175,6 +200,7 @@ mod tests {
             created_at: DateTime::UNIX_EPOCH,
             revoked_at,
             expires_at,
+            monthly_budget_usd: None,
         }
     }
 

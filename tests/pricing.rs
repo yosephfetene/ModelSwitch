@@ -21,7 +21,7 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use common::{ACCOUNTING_TIMEOUT, AUTH_TIMEOUT, DB_CHECK_TIMEOUT, FakeProvider, REQUEST_LIMITS};
+use common::{DB_CHECK_TIMEOUT, FakeProvider, REQUEST_LIMITS};
 use modelswitch::accounting::{Cost, Failure, Outcome, RecordStore, RequestRecord};
 use modelswitch::cli::keys;
 use modelswitch::cli::pricing::{self, SetPrice};
@@ -449,9 +449,10 @@ async fn generate(pool: &PgPool, usage: Usage) -> (StatusCode, Option<String>, S
         db: Arc::new(PgDatabaseCheck::new(pool.clone())),
         db_check_timeout: DB_CHECK_TIMEOUT,
         keys: Arc::new(PgKeyStore::new(pool.clone())),
-        auth_timeout: AUTH_TIMEOUT,
+        auth_timeout: common::REAL_DATABASE_TIMEOUT,
+        budgets: common::no_budgets(),
         records: Arc::new(PgRecordStore::new(pool.clone())),
-        accounting_timeout: ACCOUNTING_TIMEOUT,
+        accounting_timeout: common::REAL_DATABASE_TIMEOUT,
         limits: REQUEST_LIMITS,
         metrics: Arc::clone(&metrics),
         rate_limiter: common::generous_rate_limiter(),
@@ -479,6 +480,11 @@ async fn generate(pool: &PgPool, usage: Usage) -> (StatusCode, Option<String>, S
             .unwrap(),
     )
     .await;
+    assert_eq!(
+        response.header("x-modelswitch-accounting"),
+        None,
+        "the record was not written"
+    );
     let id = response.json()["id"].as_str().unwrap().to_owned();
     let (cost, _) = stored_cost(pool, &id).await;
     (response.status, cost, metrics.render())

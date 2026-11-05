@@ -32,7 +32,7 @@ src/
     api_key.rs
   cli/
     mod.rs
-    keys.rs            # modelswitch keys create|list|revoke
+    keys.rs            # modelswitch keys create|list|revoke|budget
     pricing.rs         # modelswitch pricing set|list
   domain/
     mod.rs
@@ -123,7 +123,9 @@ latency under a cost ceiling.
 ## 7. Concurrency and state
 
 Use Tokio async execution and SQLx connection pooling. Do not keep
-database transactions open while waiting on a provider. Use
-database-backed atomic operations for budgets and limits that must hold
-across multiple instances. In-memory counters are only suitable for
-documented single-instance or best-effort behavior.
+database transactions open while waiting on a provider. Limits that
+must hold across multiple instances are checked against the database:
+budgets read recorded spending, so every server sees the same total, and
+can overshoot only by what is already running (ADR-035). In-memory
+counters are only suitable for documented single-instance or best-effort
+behavior.
