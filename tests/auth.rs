@@ -143,12 +143,23 @@ async fn revoked_key_is_rejected() {
     assert_unauthorized(&call_with_key(&app(&keys), &key).await);
 }
 
+#[tokio::test]
+async fn expired_key_is_rejected() {
+    let keys = FakeKeyStore::new(DbMode::Up);
+    let (key, _) = keys.add_key();
+    keys.expire(&key);
+
+    assert_unauthorized(&call_with_key(&app(&keys), &key).await);
+}
+
 // 7
 #[tokio::test]
 async fn all_rejections_look_the_same() {
     let keys = FakeKeyStore::new(DbMode::Up);
     let (revoked, _) = keys.add_key();
     keys.revoke(&revoked);
+    let (expired, _) = keys.add_key();
+    keys.expire(&expired);
     let app = app(&keys);
 
     let responses = [
@@ -156,6 +167,7 @@ async fn all_rejections_look_the_same() {
         call(&app, PROTECTED, Some("Bearer hello")).await,
         call_with_key(&app, WELL_FORMED_UNKNOWN).await,
         call_with_key(&app, &revoked).await,
+        call_with_key(&app, &expired).await,
     ];
 
     // Everything a client sees, minus the per-request ID.
@@ -241,6 +253,11 @@ async fn rejections_log_reason_never_key() {
     let keys = FakeKeyStore::new(DbMode::Up);
     let (revoked, revoked_id) = keys.add_key();
     keys.revoke(&revoked);
+    let (expired, expired_id) = keys.add_key();
+    keys.expire(&expired);
+    let (both, _) = keys.add_key();
+    keys.revoke(&both);
+    keys.expire(&both);
     let app = app(&keys);
 
     let cases = [
@@ -254,6 +271,8 @@ async fn rejections_log_reason_never_key() {
             "reason=unknown",
         ),
         (call_with_key(&app, &revoked).await, "reason=revoked"),
+        (call_with_key(&app, &expired).await, "reason=expired"),
+        (call_with_key(&app, &both).await, "reason=revoked"),
     ];
 
     for (response, reason) in &cases {
@@ -264,16 +283,18 @@ async fn rejections_log_reason_never_key() {
             "no {reason} line: {logs:#?}"
         );
     }
-    let revoked_logs = our_logs(&cases[3].0);
-    assert!(
-        revoked_logs
-            .iter()
-            .any(|line| line.contains(&revoked_id.to_string())),
-        "{revoked_logs:#?}"
-    );
+    for (case, id) in [(3, revoked_id), (4, expired_id)] {
+        let logs = our_logs(&cases[case].0);
+        assert!(
+            logs.iter().any(|line| line.contains(&id.to_string())),
+            "{logs:#?}"
+        );
+    }
     let all = CapturedLogs::global().text();
-    let body = revoked.strip_prefix("ms_dev_").unwrap();
-    assert!(!all.contains(body), "key leaked into logs");
+    for key in [&revoked, &expired] {
+        let body = key.strip_prefix("ms_dev_").unwrap();
+        assert!(!all.contains(body), "key leaked into logs");
+    }
 }
 
 // 13

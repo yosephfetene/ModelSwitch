@@ -13,10 +13,12 @@ Implemented in `migrations/` (Stage 1):
     `ms_dev_7Hq2`), for display only
 -   `key_hash` --- unique SHA-256 hash of the full key (32 bytes)
 -   `created_at`, `revoked_at`
+-   `expires_at` --- optional; NULL means the key never expires
+    (ADR-033)
 -   Status is derived: revoked when `revoked_at` is set, otherwise
-    active (ADR-022). `expires_at` and an optional
-    `rate_limit_policy_id` arrive in Stage 3. Until a key can have its own
-    policy, every key shares the configured limits (ADR-031, ADR-032).
+    expired once `expires_at` has passed, otherwise active (ADR-022).
+    An optional `rate_limit_policy_id` arrives later. Until a key can
+    have its own policy, every key shares the configured limits (ADR-031, ADR-032).
 
 Keys are `ms_dev_` or `ms_live_` followed by 32 random bytes in base62.
 Generate keys securely, display a new key once, and never log its

@@ -91,6 +91,7 @@ Prerequisites: Rust (stable) and PostgreSQL 18.
     ``` bash
     cargo run -- migrate
     cargo run -- keys create --name laptop
+    cargo run -- keys create --name contractor --expires-in-days 30
     cargo run -- keys list
     cargo run -- keys revoke <ID>
     ```

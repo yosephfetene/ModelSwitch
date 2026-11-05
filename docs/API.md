@@ -14,14 +14,15 @@ Authorization: Bearer ms_live_REDACTED
 This is a placeholder, not a real key. Keys use an environment prefix
 (`ms_dev_` or `ms_live_`) followed by 32 random bytes in base62. They are
 shown once on creation, stored only as SHA-256 hashes, and can be
-revoked (see ADR-012).
+revoked (see ADR-012) or given an expiry (ADR-033).
 
 Every `/v1/*` route requires a key; `/health/*` never does. A missing,
-malformed, unknown, or revoked key gets the same `401 unauthorized`
+malformed, unknown, revoked, or expired key gets the same
+`401 unauthorized`
 with `WWW-Authenticate: Bearer`, so clients cannot tell which. If the
 key cannot be checked because the database is down or slow, the
 request is refused with `503 service_unavailable` (fail closed); retry
-later. Revocation takes effect on the next request (ADR-023).
+later. Revocation and expiry take effect on the next request (ADR-023).
 
 ## `POST /v1/generate`
 
@@ -170,7 +171,7 @@ change. Codes implemented so far: `invalid_request` (400), `unauthorized`
 |---|---:|
 | Invalid JSON, fields, or correlation ID | 400 |
 | Request body over 1 MiB | 413 |
-| Missing/invalid/revoked key | 401 |
+| Missing/invalid/revoked/expired key | 401 |
 | Authenticated but not permitted | 403 |
 | Unknown route | 404 |
 | Route exists but not for this HTTP method | 405 |

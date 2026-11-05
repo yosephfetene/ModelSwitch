@@ -23,7 +23,7 @@ use secrecy::ExposeSecret;
 use uuid::Uuid;
 
 use modelswitch::accounting::{RecordStore, RecordStoreError, RequestRecord};
-use modelswitch::auth::api_key::{KeyHash, NewApiKey};
+use modelswitch::auth::api_key::{KeyEnvironment, KeyHash, NewApiKey};
 use modelswitch::concurrency::ConcurrencyLimiter;
 use modelswitch::domain::{GenerateRequest, Generation, Provider, ProviderError, Usage};
 use modelswitch::providers::Registry;
@@ -104,18 +104,28 @@ impl FakeKeyStore {
 
     /// Stores a new active key and returns its plaintext and ID.
     pub fn add_key(&self) -> (String, Uuid) {
-        let key = NewApiKey::generate().unwrap();
+        let key = NewApiKey::generate(KeyEnvironment::Dev).unwrap();
         let id = Uuid::now_v7();
-        self.keys
-            .lock()
-            .unwrap()
-            .insert(key.hash(), KeyLookup { id, revoked: false });
+        self.keys.lock().unwrap().insert(
+            key.hash(),
+            KeyLookup {
+                id,
+                revoked: false,
+                expired: false,
+            },
+        );
         (key.plaintext().expose_secret().to_owned(), id)
     }
 
     pub fn revoke(&self, key: &str) {
         if let Some(entry) = self.keys.lock().unwrap().get_mut(&KeyHash::of(key)) {
             entry.revoked = true;
+        }
+    }
+
+    pub fn expire(&self, key: &str) {
+        if let Some(entry) = self.keys.lock().unwrap().get_mut(&KeyHash::of(key)) {
+            entry.expired = true;
         }
     }
 

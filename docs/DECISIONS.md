@@ -704,3 +704,33 @@ operator can create keys. One can be added later without changing this
 limit, and should be if the number of keys grows. Today's responses are
 complete when the handler returns, so that is when the seat frees;
 streaming must hold the seat until the stream ends.
+
+## ADR-033 --- Optional key expiry; `ms_live_` is a label
+
+**Status:** Accepted.
+
+**Context:** The SRS requires rejecting expired keys, and ADR-012 promises
+`ms_live_` keys, but keys could only be `ms_dev_` and only ended by
+revocation. Open questions were whether keys expire by default, and
+whether the server should treat the two prefixes differently.
+
+**Decision:** Expiry is optional. `keys create --expires-in-days N`
+(1--3650) sets `expires_at`; without it the column stays NULL and the key
+works until revoked, so existing keys are unaffected. An expired key gets
+the same `401` as any other bad key, with `expired` logged as the reason;
+revoked wins when both apply. Authentication compares `expires_at` with
+the database's `now()` in the existing key lookup, and `expires_at` is
+set from the same clock, so there is one clock and no extra query.
+`keys list` shows an `EXPIRES` column and an `expired` status. `keys create
+--live` makes an `ms_live_` key; `ms_dev_` stays the default. The prefix is
+a label for people and secret scanners: the server accepts both alike and
+has no environment setting.
+
+**Consequences:** A key can only expire because someone chose that, so a
+date never surprises a running service, which matters because the gateway
+has no way to warn anyone first. A key created without the flag lasts until
+revoked, so temporary keys rely on the operator using it; a default limit
+can follow once warnings exist. A dev key cannot authenticate on a live
+server only because each environment has its own database and so its own
+keys. Sharing one database across environments would remove that protection
+with nothing to catch it, so it must not be done.

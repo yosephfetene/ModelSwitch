@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::api_key::{KeyHash, KeyName, KeyStatus, NewApiKey};
+use crate::auth::api_key::{ExpiryDays, KeyHash, KeyName, KeyStatus, NewApiKey};
 use crate::storage::BoxFuture;
 
 /// A stored key as shown to operators. Deliberately has no hash field:
@@ -17,13 +17,19 @@ pub struct ApiKeyRecord {
     pub key_prefix: String,
     pub created_at: DateTime<Utc>,
     pub revoked_at: Option<DateTime<Utc>>,
+    /// `None` means the key never expires.
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 impl ApiKeyRecord {
-    pub fn status(&self) -> KeyStatus {
-        match self.revoked_at {
-            Some(_) => KeyStatus::Revoked,
-            None => KeyStatus::Active,
+    /// The status as of `now`. Revocation wins, being a deliberate act.
+    pub fn status(&self, now: DateTime<Utc>) -> KeyStatus {
+        if self.revoked_at.is_some() {
+            KeyStatus::Revoked
+        } else if self.expires_at.is_some_and(|expires_at| expires_at <= now) {
+            KeyStatus::Expired
+        } else {
+            KeyStatus::Active
         }
     }
 }
@@ -32,14 +38,19 @@ pub async fn insert(
     pool: &PgPool,
     name: &KeyName,
     key: &NewApiKey,
+    expires_in: Option<ExpiryDays>,
 ) -> Result<ApiKeyRecord, sqlx::Error> {
+    // The database's clock, the one authentication compares against.
+    // `make_interval(NULL)` is NULL, so no expiry stays NULL.
     sqlx::query_as(
-        "INSERT INTO client_api_keys (name, key_prefix, key_hash) VALUES ($1, $2, $3) \
-         RETURNING id, name, key_prefix, created_at, revoked_at",
+        "INSERT INTO client_api_keys (name, key_prefix, key_hash, expires_at) \
+         VALUES ($1, $2, $3, now() + make_interval(days => $4)) \
+         RETURNING id, name, key_prefix, created_at, revoked_at, expires_at",
     )
     .bind(name.as_str())
     .bind(key.prefix())
     .bind(key.hash().as_bytes().as_slice())
+    .bind(expires_in.map(|days| days.days() as i32))
     .fetch_one(pool)
     .await
 }
@@ -47,7 +58,8 @@ pub async fn insert(
 /// All keys, oldest first (UUIDv7 IDs sort by creation time).
 pub async fn list(pool: &PgPool) -> Result<Vec<ApiKeyRecord>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, name, key_prefix, created_at, revoked_at FROM client_api_keys ORDER BY id",
+        "SELECT id, name, key_prefix, created_at, revoked_at, expires_at \
+         FROM client_api_keys ORDER BY id",
     )
     .fetch_all(pool)
     .await
@@ -64,7 +76,7 @@ pub enum RevokeOutcome {
 pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<RevokeOutcome, sqlx::Error> {
     let revoked: Option<ApiKeyRecord> = sqlx::query_as(
         "UPDATE client_api_keys SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL \
-         RETURNING id, name, key_prefix, created_at, revoked_at",
+         RETURNING id, name, key_prefix, created_at, revoked_at, expires_at",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -74,7 +86,8 @@ pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<RevokeOutcome, sqlx::Erro
     }
 
     let existing: Option<ApiKeyRecord> = sqlx::query_as(
-        "SELECT id, name, key_prefix, created_at, revoked_at FROM client_api_keys WHERE id = $1",
+        "SELECT id, name, key_prefix, created_at, revoked_at, expires_at \
+         FROM client_api_keys WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -90,6 +103,7 @@ pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<RevokeOutcome, sqlx::Erro
 pub struct KeyLookup {
     pub id: Uuid,
     pub revoked: bool,
+    pub expired: bool,
 }
 
 /// Why a key lookup failed. For logs only, never for responses.
@@ -108,6 +122,7 @@ pub trait KeyStore: Send + Sync {
 
 /// `KeyStore` backed by PostgreSQL. One indexed lookup per request (the
 /// `key_hash` UNIQUE constraint), so revocation applies immediately.
+/// Expiry is judged by the database's clock in the same query.
 pub struct PgKeyStore {
     pool: PgPool,
 }
@@ -124,14 +139,67 @@ impl KeyStore for PgKeyStore {
         hash: KeyHash,
     ) -> BoxFuture<'_, Result<Option<KeyLookup>, KeyStoreError>> {
         Box::pin(async move {
-            sqlx::query_as::<_, (Uuid, bool)>(
-                "SELECT id, revoked_at IS NOT NULL FROM client_api_keys WHERE key_hash = $1",
+            sqlx::query_as::<_, (Uuid, bool, bool)>(
+                "SELECT id, revoked_at IS NOT NULL, COALESCE(expires_at <= now(), false) \
+                 FROM client_api_keys WHERE key_hash = $1",
             )
             .bind(hash.as_bytes().as_slice())
             .fetch_optional(&self.pool)
             .await
-            .map(|row| row.map(|(id, revoked)| KeyLookup { id, revoked }))
+            .map(|row| {
+                row.map(|(id, revoked, expired)| KeyLookup {
+                    id,
+                    revoked,
+                    expired,
+                })
+            })
             .map_err(|error| KeyStoreError(error.to_string()))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeDelta;
+
+    use super::*;
+
+    fn record(
+        revoked_at: Option<DateTime<Utc>>,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> ApiKeyRecord {
+        ApiKeyRecord {
+            id: Uuid::nil(),
+            name: "k".to_owned(),
+            key_prefix: "ms_dev_abcd".to_owned(),
+            created_at: DateTime::UNIX_EPOCH,
+            revoked_at,
+            expires_at,
+        }
+    }
+
+    #[test]
+    fn a_key_expires_at_the_exact_moment() {
+        let at = DateTime::UNIX_EPOCH + TimeDelta::days(30);
+        let key = record(None, Some(at));
+
+        assert_eq!(key.status(at - TimeDelta::seconds(1)), KeyStatus::Active);
+        assert_eq!(key.status(at), KeyStatus::Expired);
+        assert_eq!(key.status(at + TimeDelta::seconds(1)), KeyStatus::Expired);
+    }
+
+    #[test]
+    fn no_expiry_means_active_forever() {
+        let far_future = DateTime::UNIX_EPOCH + TimeDelta::days(100_000);
+
+        assert_eq!(record(None, None).status(far_future), KeyStatus::Active);
+    }
+
+    #[test]
+    fn revocation_wins_over_expiry() {
+        let at = DateTime::UNIX_EPOCH + TimeDelta::days(1);
+        let key = record(Some(at), Some(at));
+
+        assert_eq!(key.status(at), KeyStatus::Revoked);
     }
 }
