@@ -128,10 +128,12 @@ Response:
     from every route, including errors; on errors it equals the body's
     `request_id`.
 -   `X-Client-Request-Id` --- echoed when the client sent a valid one.
--   `Retry-After` --- on `429`, the seconds to wait before the key has
-    capacity again. Each key has a token bucket: every authenticated
+-   `Retry-After` --- on `429 rate_limited`, the seconds to wait before
+    the key has capacity again. Each key has a token bucket: every authenticated
     request spends one token, even if it is then rejected as invalid;
-    the gateway's own retries and fallback spend none (ADR-031).
+    the gateway's own retries and fallback spend none (ADR-031). It is
+    absent on `429 concurrency_limited`: nobody knows when a running
+    request will finish, so use your own backoff (ADR-032).
 -   `X-ModelSwitch-Attempts` --- how many provider attempts the request
     took, on every response that reached a provider. When all attempts
     fail, the response is the last attempt's error; which providers were
@@ -174,6 +176,7 @@ change. Codes implemented so far: `invalid_request` (400), `unauthorized`
 | Route exists but not for this HTTP method | 405 |
 | Unknown alias/pin, no eligible provider, or unsupported capability | 422 |
 | Rate limit exceeded (`rate_limited`, with `Retry-After` in seconds) | 429 |
+| Too many requests running for this key (`concurrency_limited`, no `Retry-After`) | 429 |
 | Unexpected gateway failure | 500 |
 | Upstream provider failure | 502 |
 | Dependency needed before the provider call is unavailable (for example the database) | 503 |

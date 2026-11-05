@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod concurrency;
 pub mod error;
 pub mod generate;
 pub mod health;

@@ -11,6 +11,7 @@ use tracing::Level;
 use crate::accounting::RecordStore;
 use crate::api;
 use crate::api::error::ApiError;
+use crate::concurrency::ConcurrencyLimiter;
 use crate::metrics::Metrics;
 use crate::providers::Registry;
 use crate::rate_limit::RateLimiter;
@@ -44,6 +45,8 @@ pub struct AppState {
     /// Per-key request limits, a trait object so a shared store can
     /// replace the in-memory one.
     pub rate_limiter: Arc<dyn RateLimiter>,
+    /// Per-key limits on requests running at once (ADR-032).
+    pub concurrency: Arc<ConcurrencyLimiter>,
     /// Configured aliases and models, for resolving a request's `model`.
     pub catalog: Arc<Catalog>,
     /// Configured providers, ready to call.
@@ -63,11 +66,15 @@ pub fn build_metrics_router(metrics: Arc<Metrics>) -> Router {
 }
 
 /// Requires a valid API key on every route in `routes` (the `/v1` API),
-/// then applies that key's rate limit. Route layers, so unknown paths
-/// still get 404 rather than 401, and the last one added runs first:
-/// the limiter only ever sees authenticated keys.
+/// then applies that key's rate limit and concurrency limit. Route
+/// layers, so unknown paths still get 404 rather than 401, and the last
+/// one added runs first: the limiters only ever see authenticated keys.
 pub fn require_api_key(routes: Router<AppState>, state: &AppState) -> Router<AppState> {
     routes
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            api::concurrency::limit_concurrency,
+        ))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             api::rate_limit::rate_limit,

@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use modelswitch::accounting::{RecordStore, RecordStoreError, RequestRecord};
 use modelswitch::auth::api_key::{KeyHash, NewApiKey};
+use modelswitch::concurrency::ConcurrencyLimiter;
 use modelswitch::domain::{GenerateRequest, Generation, Provider, ProviderError, Usage};
 use modelswitch::providers::Registry;
 use modelswitch::rate_limit::{RateLimit, RateLimiter, TokenBucketLimiter};
@@ -266,6 +267,11 @@ pub fn generous_rate_limiter() -> Arc<dyn RateLimiter> {
     }))
 }
 
+/// High enough that only tests about concurrency ever meet the limit.
+pub fn generous_concurrency() -> Arc<ConcurrencyLimiter> {
+    Arc::new(ConcurrencyLimiter::new(100_000))
+}
+
 pub fn state(db: FakeDatabase) -> AppState {
     state_with_keys(db, FakeKeyStore::new(DbMode::Up))
 }
@@ -289,6 +295,7 @@ pub fn state_with_records(
         limits: REQUEST_LIMITS,
         metrics: Arc::default(),
         rate_limiter: generous_rate_limiter(),
+        concurrency: generous_concurrency(),
         catalog: Arc::new(Catalog::default()),
         providers: Arc::new(Registry::default()),
     }

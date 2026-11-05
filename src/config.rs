@@ -33,6 +33,8 @@ pub struct Config {
     pub metrics: MetricsConfig,
     /// The limit applied to each API key (ADR-031).
     pub rate_limit: RateLimit,
+    /// Requests each API key may have running at once (ADR-032).
+    pub concurrency_per_key: u32,
     pub log: LogConfig,
     /// Configured providers by name.
     pub providers: BTreeMap<String, ProviderConfig>,
@@ -143,6 +145,8 @@ pub struct FileConfig {
     pub metrics: FileMetrics,
     #[serde(default)]
     pub rate_limit: FileRateLimit,
+    #[serde(default)]
+    pub concurrency: FileConcurrency,
     #[serde(default)]
     pub log: FileLog,
     #[serde(default)]
@@ -257,6 +261,25 @@ fn default_rate_limit() -> u32 {
     60
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileConcurrency {
+    #[serde(default = "default_concurrency_per_key")]
+    pub per_key: u32,
+}
+
+impl Default for FileConcurrency {
+    fn default() -> Self {
+        Self {
+            per_key: default_concurrency_per_key(),
+        }
+    }
+}
+
+fn default_concurrency_per_key() -> u32 {
+    10
+}
+
 fn default_max_attempts() -> usize {
     3
 }
@@ -316,6 +339,7 @@ fn default_log_format() -> LogFormat {
     LogFormat::Pretty
 }
 
+const CONCURRENCY_PER_KEY_RANGE: std::ops::RangeInclusive<u32> = 1..=10_000;
 const MAX_CONNECTIONS_RANGE: std::ops::RangeInclusive<u32> = 1..=100;
 const DATABASE_TIMEOUT_MS_RANGE: std::ops::RangeInclusive<u64> = 100..=10_000;
 const MAX_ATTEMPTS_RANGE: std::ops::RangeInclusive<usize> = 1..=10;
@@ -457,6 +481,14 @@ impl Config {
             }
         }
 
+        if !CONCURRENCY_PER_KEY_RANGE.contains(&file.concurrency.per_key) {
+            problems.push(format!(
+                "concurrency.per_key: must be between {} and {}",
+                CONCURRENCY_PER_KEY_RANGE.start(),
+                CONCURRENCY_PER_KEY_RANGE.end()
+            ));
+        }
+
         if !MAX_ATTEMPTS_RANGE.contains(&file.reliability.max_attempts) {
             problems.push(format!(
                 "reliability.max_attempts: must be between {} and {}",
@@ -505,6 +537,7 @@ impl Config {
                     requests_per_minute: file.rate_limit.requests_per_minute,
                     burst: file.rate_limit.burst,
                 },
+                concurrency_per_key: file.concurrency.per_key,
                 log: LogConfig {
                     format: file.log.format,
                 },
@@ -877,6 +910,18 @@ mod tests {
             .to_string();
         assert!(error.contains("rate_limit.requests_per_minute"), "{error}");
         assert!(error.contains("rate_limit.burst"), "{error}");
+    }
+
+    #[test]
+    fn concurrency_default_is_loaded_and_checked() {
+        let config = Config::from_toml(VALID, env_with_url).unwrap();
+        assert_eq!(config.concurrency_per_key, 10);
+
+        let bad = format!("{VALID}\n[concurrency]\nper_key = 0\n");
+        let error = Config::from_toml(&bad, env_with_url)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("concurrency.per_key"), "{error}");
     }
 
     #[test]

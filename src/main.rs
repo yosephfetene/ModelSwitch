@@ -6,6 +6,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use uuid::Uuid;
 
+use modelswitch::concurrency::ConcurrencyLimiter;
 use modelswitch::config::Config;
 use modelswitch::providers::Registry;
 use modelswitch::rate_limit::TokenBucketLimiter;
@@ -116,6 +117,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         limits: config.reliability,
         metrics: Arc::default(),
         rate_limiter: Arc::new(TokenBucketLimiter::new(config.rate_limit)),
+        concurrency: Arc::new(ConcurrencyLimiter::new(config.concurrency_per_key)),
         catalog: Arc::new(config.catalog()),
         providers: Arc::new(
             Registry::from_config(&config.providers).context("failed to set up providers")?,

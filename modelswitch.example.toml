@@ -37,6 +37,11 @@ request_timeout_ms = 60000
 requests_per_minute = 60
 burst = 60
 
+[concurrency]
+# Requests each API key may have running at once (1-10000). Past it,
+# requests get 429 concurrency_limited at once, with no Retry-After.
+per_key = 10
+
 [metrics]
 # Internal address for GET /metrics (Prometheus text format). It needs no
 # API key, so keep it off the public network. Remove this section to open

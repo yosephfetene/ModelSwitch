@@ -667,3 +667,40 @@ more than one needs a shared `RateLimiter`, with its own deadline.
 This fits a limit that protects the next few seconds. Budgets, which
 protect money over longer periods, must be durable and will use
 PostgreSQL.
+
+## ADR-032 --- Per-key concurrency limits: refuse, never queue
+
+**Status:** Accepted.
+
+**Context:** A rate limit counts arrivals, not work in progress. A
+request can run for up to `request_timeout`, so when a provider hangs, an
+allowed arrival rate piles up as open requests, each holding a connection
+and memory. SECURITY.md requires bounded concurrency; what to count, and
+what to do at the limit, were open.
+
+**Decision:** Each API key may have `concurrency.per_key` requests running
+at once (default 10). The count lives in memory, in a concrete
+`ConcurrencyLimiter`: requests running on a server are that server's own
+load, so no shared store will replace it, and it needs no trait. A request
+takes a seat after the rate limit, and holds it until it ends; the seat
+frees itself when dropped, so success, failure, a panic, and a client
+disconnect all return it. Retries and fallback share the request's seat.
+With no free seat the client gets an immediate `429 concurrency_limited`:
+no queue, no provider call, no request record, and
+`concurrency_limited_total` is incremented. A refused request has already
+spent its rate-limit token, since it did arrive. There is no `Retry-After`,
+because nobody knows when a running request will finish, and a guess would
+tell clients to retry on a schedule that may not work; `Retry-After` keeps
+meaning that waiting that long will work.
+
+**Consequences:** A key never has more than `per_key` requests running on
+one server, and one bad or leaked key cannot crowd out the others. A
+separate code and counter tell a slow provider
+(`concurrency_limited_total`) apart from a busy client
+(`rate_limited_total`). A client that sends more than `per_key` at once is
+refused even on a healthy day, so the default needs headroom. There is no
+server-wide cap: the total is at most keys × `per_key`, and only an
+operator can create keys. One can be added later without changing this
+limit, and should be if the number of keys grows. Today's responses are
+complete when the handler returns, so that is when the seat frees;
+streaming must hold the seat until the stream ends.
