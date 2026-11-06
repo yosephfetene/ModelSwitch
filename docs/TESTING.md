@@ -9,6 +9,13 @@ Cost calculation and pricing-version selection run as exact `numeric`
 arithmetic in the database, so they are tested against PostgreSQL
 (ADR-034).
 
+## Redaction tests
+
+Stores log database error text as it comes, so `tests/redaction.rs` makes
+the real drivers fail, with canaries in the connection details and the
+provider key, and checks the error text holds none of them. Fakes cannot
+show this, because their errors are invented.
+
 ## Provider adapter contract tests
 
 Use a mock HTTP server to test request serialization, auth headers,
