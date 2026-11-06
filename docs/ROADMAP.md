@@ -65,7 +65,7 @@ automated tests. Tag `v0.1.0`.
 -   Request-size and concurrency limits
 -   Per-key rate limits
 -   Versioned pricing and estimated-cost calculation
--   Labeled usage estimates for budget enforcement (ADR-010)
+-   Monthly budgets from recorded cost estimates (ADR-035)
 -   Budget consistency guarantees
 -   Redaction/security tests
 

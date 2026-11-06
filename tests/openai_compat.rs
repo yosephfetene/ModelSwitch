@@ -10,7 +10,7 @@ use axum::http::{Method, Request, StatusCode};
 use secrecy::SecretString;
 use serde_json::{Value, json};
 
-use common::mock_http::{Mock, closed_port};
+use common::mock_http::{CLOSED_PORT, Mock};
 use common::{DbMode, FakeDatabase, FakeKeyStore, send, state_with_keys};
 use modelswitch::build_router;
 use modelswitch::config::Config;
@@ -209,9 +209,7 @@ async fn redirects_are_not_followed() {
 
 #[tokio::test]
 async fn connection_failure_is_a_request_error() {
-    let port = closed_port().await;
-
-    let error = adapter(&format!("http://127.0.0.1:{port}/v1"), None)
+    let error = adapter(&format!("http://127.0.0.1:{CLOSED_PORT}/v1"), None)
         .generate("m", &request("Hello", None))
         .await
         .unwrap_err();

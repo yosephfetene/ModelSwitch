@@ -104,8 +104,6 @@ async fn handle(
     response
 }
 
-/// A port with (almost certainly) nothing listening: bound, then released.
-pub async fn closed_port() -> u16 {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    listener.local_addr().unwrap().port()
-}
+/// A port nothing listens on. Fixed, not picked free and released: mock
+/// servers in parallel tests bind free ports, and one could take it.
+pub const CLOSED_PORT: u16 = 1;
