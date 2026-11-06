@@ -5,6 +5,9 @@
 
 use crate::domain::ProviderError;
 
+/// Gemini's reason for a bad key, which it sends as a 400.
+const REJECTED_KEY_CODE: &str = "API_KEY_INVALID";
+
 /// What a failed attempt says about trying again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureClass {
@@ -46,6 +49,7 @@ impl FailureClass {
 ///
 /// - 500-599: the provider is struggling.
 /// - 401, 403, 404, 429: this provider's key, model, or rate limit.
+/// - 400 with the code `API_KEY_INVALID`: this provider's key.
 /// - any other 400-499: our request was rejected.
 /// - anything else (such as a 3xx redirect we refused to follow): a
 ///   misconfigured target.
@@ -56,12 +60,13 @@ pub fn classify(error: &ProviderError) -> FailureClass {
         ProviderError::InvalidResponse(_) => FailureClass::Transient,
         // A safety refusal: no other provider should get this prompt.
         ProviderError::Blocked { .. } => FailureClass::RequestProblem,
-        ProviderError::Status { status, .. } => match status {
+        ProviderError::Status { status, code } => match status {
             // The provider is struggling.
             500..=599 => FailureClass::Transient,
             // This provider's key, model, or rate limit. Must come BEFORE
             // the 4xx range, or the range would catch these first.
             401 | 403 | 404 | 429 => FailureClass::TargetProblem,
+            400 if code.as_deref() == Some(REJECTED_KEY_CODE) => FailureClass::TargetProblem,
             // Our request was rejected.
             400..=499 => FailureClass::RequestProblem,
             // Anything else, such as a redirect we refused to follow.
@@ -107,6 +112,33 @@ mod tests {
             code: Some("rate_limit_exceeded".to_owned()),
         };
         assert_eq!(classify(&rate_limited), FailureClass::TargetProblem);
+    }
+
+    #[test]
+    fn a_rejected_key_sent_as_a_400_is_a_target_problem() {
+        let rejected_key = ProviderError::Status {
+            status: 400,
+            code: Some("API_KEY_INVALID".to_owned()),
+        };
+        assert_eq!(classify(&rejected_key), FailureClass::TargetProblem);
+    }
+
+    #[test]
+    fn only_a_400_can_be_a_rejected_key() {
+        let other_status = ProviderError::Status {
+            status: 422,
+            code: Some("API_KEY_INVALID".to_owned()),
+        };
+        assert_eq!(classify(&other_status), FailureClass::RequestProblem);
+    }
+
+    #[test]
+    fn a_400_with_another_code_is_still_a_request_problem() {
+        let invalid_request = ProviderError::Status {
+            status: 400,
+            code: Some("INVALID_ARGUMENT".to_owned()),
+        };
+        assert_eq!(classify(&invalid_request), FailureClass::RequestProblem);
     }
 
     #[test]

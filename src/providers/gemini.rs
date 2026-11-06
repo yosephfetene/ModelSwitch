@@ -98,10 +98,13 @@ impl Gemini {
         if !status.is_success() {
             // Newer errors carry a string `code` (`rate_limit_exceeded`);
             // older ones a numeric `code` and a string `status`
-            // (`RESOURCE_EXHAUSTED`).
+            // (`RESOURCE_EXHAUSTED`). A `reason` in `details` is more
+            // exact than either: a bad key is only `INVALID_ARGUMENT`
+            // until its reason says `API_KEY_INVALID`.
             return Err(ProviderError::Status {
                 status: status.as_u16(),
-                code: http::error_code(&bytes, &["code", "status"]),
+                code: http::error_reason(&bytes)
+                    .or_else(|| http::error_code(&bytes, &["code", "status"])),
             });
         }
 
