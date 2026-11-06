@@ -563,6 +563,12 @@ everything fails.
     Sending a refused prompt to other providers until one accepts it
     would route around safety filters.
 
+Gemini sends a bad API key as a 400 with the catch-all status
+`INVALID_ARGUMENT`, and names the problem only in `details`
+(`API_KEY_INVALID`). Its adapter records that reason as the code and
+keeps the real 400, and a 400 with that code is a target problem: the
+provider's key is at fault, not the request.
+
 A request makes at most `max_attempts` attempts (default 3) and runs at
 most `request_timeout` in total (default 60 s), whichever ends first.
 Each attempt's deadline is the smaller of its provider's timeout and

@@ -341,6 +341,136 @@ async fn generate_through(base: &str, input: &str) -> common::TestResponse {
     .await
 }
 
+/// Gemini's answer to a bad key, as captured from the live API: a 400
+/// with a catch-all status. Only `details` says what is wrong.
+fn rejected_key_body() -> String {
+    json!({ "error": {
+        "code": 400,
+        "message": "API key not valid. Please pass a valid API key.",
+        "status": "INVALID_ARGUMENT",
+        "details": [
+            {
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                "reason": "API_KEY_INVALID",
+                "domain": "googleapis.com",
+                "metadata": { "service": "generativelanguage.googleapis.com" }
+            },
+            {
+                "@type": "type.googleapis.com/google.rpc.LocalizedMessage",
+                "locale": "en-US",
+                "message": "API key not valid. Please pass a valid API key."
+            }
+        ]
+    }})
+    .to_string()
+}
+
+#[tokio::test]
+async fn a_rejected_key_is_reported_by_its_reason_with_its_real_status() {
+    let error = generate_with(StatusCode::BAD_REQUEST, rejected_key_body())
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        ProviderError::Status {
+            status: 400,
+            code: Some("API_KEY_INVALID".to_owned())
+        }
+    );
+}
+
+#[tokio::test]
+async fn an_error_without_a_reason_keeps_its_status_code() {
+    let body = json!({ "error": {
+        "code": 400,
+        "message": "Unknown field",
+        "status": "INVALID_ARGUMENT",
+        "details": [{ "reason": "Your prompt was: PROMPT-CANARY" }]
+    }});
+
+    let error = generate_with(StatusCode::BAD_REQUEST, body.to_string())
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        ProviderError::Status {
+            status: 400,
+            code: Some("INVALID_ARGUMENT".to_owned())
+        }
+    );
+}
+
+/// An alias of Gemini, then the built-in echo provider.
+async fn generate_through_alias(base: &str) -> common::TestResponse {
+    let config = Config::from_toml(
+        &format!(
+            r#"
+            [server]
+            bind = "127.0.0.1:0"
+            [database]
+            url_env = "DATABASE_URL"
+            [providers.gemini]
+            adapter = "gemini"
+            base_url = "{base}"
+            api_key_env = "GEMINI_API_KEY"
+            models = ["gemini-3.8-flash"]
+            [providers.echo]
+            adapter = "echo"
+            models = ["echo-1"]
+            [aliases.fast]
+            candidates = ["gemini/gemini-3.8-flash", "echo/echo-1"]
+            "#
+        ),
+        |name| match name {
+            "GEMINI_API_KEY" => Some("AIza_from_env".to_owned()),
+            _ => Some("postgres://unused".to_owned()),
+        },
+    )
+    .unwrap();
+    let keys = FakeKeyStore::new(DbMode::Up);
+    let (key, _) = keys.add_key();
+    let mut state = state_with_keys(FakeDatabase::new(DbMode::Up), keys);
+    state.catalog = Arc::new(config.catalog());
+    state.providers = Arc::new(Registry::from_config(&config.providers).unwrap());
+    send(
+        &build_router(state),
+        Request::post("/v1/generate")
+            .header("authorization", format!("Bearer {key}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "model": "fast", "input": "Hello" }).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_rejected_key_falls_back_to_the_next_provider() {
+    let (_mock, root) = start(StatusCode::BAD_REQUEST, rejected_key_body()).await;
+
+    let response = generate_through_alias(&root).await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    assert_eq!(response.json()["provider"], "echo");
+}
+
+#[tokio::test]
+async fn a_rejected_request_does_not_fall_back() {
+    let body = json!({ "error": {
+        "code": 400,
+        "message": "Unknown field",
+        "status": "INVALID_ARGUMENT"
+    }});
+    let (_mock, root) = start(StatusCode::BAD_REQUEST, body.to_string()).await;
+
+    let response = generate_through_alias(&root).await;
+
+    assert_eq!(response.status, StatusCode::BAD_GATEWAY);
+}
+
 /// Client → gateway → Gemini adapter → mock provider.
 #[tokio::test]
 async fn generate_end_to_end_through_configured_gemini() {

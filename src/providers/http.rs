@@ -66,6 +66,18 @@ pub(crate) fn error_code(body: &[u8], fields: &[&str]) -> Option<String> {
     identifier(code)
 }
 
+/// The first usable `reason` in the `details` of a Google-style error, such
+/// as `API_KEY_INVALID`. It is more exact than the error's `status`, which
+/// can be a catch-all.
+pub(crate) fn error_reason(body: &[u8]) -> Option<String> {
+    let envelope: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let details = envelope.get("error")?.get("details")?.as_array()?;
+    let reason = details
+        .iter()
+        .find_map(|detail| detail.get("reason")?.as_str())?;
+    identifier(reason)
+}
+
 /// `value` if it is a short identifier such as `rate_limit_exceeded` or
 /// `RESOURCE_EXHAUSTED`.
 pub(crate) fn identifier(value: &str) -> Option<String> {
@@ -124,6 +136,26 @@ mod tests {
                 "{}",
                 String::from_utf8_lossy(body)
             );
+        }
+    }
+
+    #[test]
+    fn error_reason_finds_the_reason_among_the_details() {
+        let body = br#"{"error":{"details":[{"message":"x"},{"reason":"API_KEY_INVALID"}]}}"#;
+
+        assert_eq!(error_reason(body).as_deref(), Some("API_KEY_INVALID"));
+    }
+
+    #[test]
+    fn error_reason_drops_free_text_and_garbage() {
+        for body in [
+            &br#"{"error":{"details":[{"reason":"prompt was: tell me a secret"}]}}"#[..],
+            br#"{"error":{"details":[{"reason":42}]}}"#,
+            br#"{"error":{"details":"API_KEY_INVALID"}}"#,
+            br#"{"error":{"code":400}}"#,
+            b"not json",
+        ] {
+            assert_eq!(error_reason(body), None, "{body:?}");
         }
     }
 
