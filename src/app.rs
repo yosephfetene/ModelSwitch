@@ -10,6 +10,7 @@ use tracing::Level;
 
 use crate::accounting::RecordStore;
 use crate::api;
+use crate::api::admin::AdminState;
 use crate::api::error::ApiError;
 use crate::budget::BudgetStore;
 use crate::concurrency::ConcurrencyLimiter;
@@ -67,6 +68,12 @@ pub fn build_router(state: AppState) -> Router {
 /// so the public port never exposes it (ADR-030).
 pub fn build_metrics_router(metrics: Arc<Metrics>) -> Router {
     with_middleware(api::metrics::router()).with_state(metrics)
+}
+
+/// Builds the dashboard's application, served on its own internal
+/// listener so the public port never exposes it (ADR-036).
+pub fn build_admin_router(state: AdminState) -> Router {
+    with_middleware(api::admin::router(&state)).with_state(state)
 }
 
 /// Requires a valid API key on every route in `routes` (the `/v1` API),

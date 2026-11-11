@@ -7,6 +7,7 @@ use chrono::Utc;
 use clap::{Parser, Subcommand};
 use uuid::Uuid;
 
+use modelswitch::api::admin::AdminState;
 use modelswitch::auth::api_key::KeyEnvironment;
 use modelswitch::cli::keys::CreateOptions;
 use modelswitch::cli::pricing::SetPrice;
@@ -18,7 +19,9 @@ use modelswitch::storage::api_keys::PgKeyStore;
 use modelswitch::storage::budgets::PgBudgetStore;
 use modelswitch::storage::request_records::PgRecordStore;
 use modelswitch::storage::{self, PgDatabaseCheck};
-use modelswitch::{AppState, build_metrics_router, build_router, cli, observability};
+use modelswitch::{
+    AppState, build_admin_router, build_metrics_router, build_router, cli, observability,
+};
 
 #[derive(Parser)]
 #[command(version, about = "Multi-provider LLM inference gateway")]
@@ -234,6 +237,19 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         tokio::spawn(async move {
             if let Err(error) = axum::serve(listener, app).await {
                 tracing::error!(%error, "metrics listener stopped");
+            }
+        });
+    }
+
+    if let Some(admin) = &config.admin {
+        let listener = tokio::net::TcpListener::bind(admin.bind)
+            .await
+            .with_context(|| format!("failed to bind admin address {}", admin.bind))?;
+        tracing::info!(address = %admin.bind, "admin listening");
+        let app = build_admin_router(AdminState::new(admin, Arc::clone(&state.metrics)));
+        tokio::spawn(async move {
+            if let Err(error) = axum::serve(listener, app).await {
+                tracing::error!(%error, "admin listener stopped");
             }
         });
     }

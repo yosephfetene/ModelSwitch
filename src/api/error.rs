@@ -20,6 +20,20 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ApiError {
+    /// No valid dashboard session: never logged in, logged out, or
+    /// expired (ADR-036).
+    #[error("login required")]
+    LoginRequired,
+    /// A dashboard login with the wrong admin token.
+    #[error("login failed")]
+    LoginFailed,
+    /// Too many failed dashboard logins; logins are paused.
+    #[error("login throttled")]
+    LoginThrottled { retry_after_secs: u64 },
+    /// A dashboard request that changes state did not come from the
+    /// dashboard's own page (its `Origin` is missing or another site).
+    #[error("forbidden")]
+    Forbidden,
     /// The request is malformed (bad header, body, or field).
     #[error("invalid request: {0}")]
     InvalidRequest(&'static str),
@@ -74,14 +88,18 @@ impl ApiError {
     pub fn status(&self) -> StatusCode {
         match self {
             Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
-            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Unauthorized | Self::LoginRequired | Self::LoginFailed => {
+                StatusCode::UNAUTHORIZED
+            }
+            Self::Forbidden => StatusCode::FORBIDDEN,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnknownModel | Self::ModelNotPriced => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            Self::RateLimited { .. } | Self::ConcurrencyLimited | Self::BudgetExceeded { .. } => {
-                StatusCode::TOO_MANY_REQUESTS
-            }
+            Self::RateLimited { .. }
+            | Self::ConcurrencyLimited
+            | Self::BudgetExceeded { .. }
+            | Self::LoginThrottled { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::ServiceUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::ProviderError => StatusCode::BAD_GATEWAY,
             Self::UpstreamTimeout => StatusCode::GATEWAY_TIMEOUT,
@@ -94,6 +112,10 @@ impl ApiError {
         match self {
             Self::InvalidRequest(_) => "invalid_request",
             Self::Unauthorized => "unauthorized",
+            Self::LoginRequired => "login_required",
+            Self::LoginFailed => "login_failed",
+            Self::LoginThrottled { .. } => "login_throttled",
+            Self::Forbidden => "forbidden",
             Self::PayloadTooLarge => "payload_too_large",
             Self::UnknownModel => "unknown_model",
             Self::NotFound => "not_found",
@@ -114,6 +136,10 @@ impl ApiError {
         match self {
             Self::InvalidRequest(message) => message,
             Self::Unauthorized => "A valid API key is required.",
+            Self::LoginRequired => "Log in to the dashboard first.",
+            Self::LoginFailed => "The admin token is not valid.",
+            Self::LoginThrottled { .. } => "Too many failed logins. Retry later.",
+            Self::Forbidden => "This request must come from the dashboard's own page.",
             Self::PayloadTooLarge => "The request body is too large.",
             Self::UnknownModel => "The model is not a configured alias or provider/model pin.",
             Self::NotFound => "No route matches this path.",
@@ -153,7 +179,9 @@ impl IntoResponse for ApiError {
                     .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
             }
             // RFC 9110: tell the client when to come back.
-            Self::RateLimited { retry_after_secs } | Self::BudgetExceeded { retry_after_secs } => {
+            Self::RateLimited { retry_after_secs }
+            | Self::BudgetExceeded { retry_after_secs }
+            | Self::LoginThrottled { retry_after_secs } => {
                 response
                     .headers_mut()
                     .insert(RETRY_AFTER, HeaderValue::from(retry_after_secs));
@@ -188,6 +216,16 @@ mod tests {
         let cases = [
             (ApiError::InvalidRequest("x"), 400, "invalid_request"),
             (ApiError::Unauthorized, 401, "unauthorized"),
+            (ApiError::LoginRequired, 401, "login_required"),
+            (ApiError::LoginFailed, 401, "login_failed"),
+            (
+                ApiError::LoginThrottled {
+                    retry_after_secs: 1,
+                },
+                429,
+                "login_throttled",
+            ),
+            (ApiError::Forbidden, 403, "forbidden"),
             (ApiError::PayloadTooLarge, 413, "payload_too_large"),
             (ApiError::UnknownModel, 422, "unknown_model"),
             (ApiError::NotFound, 404, "not_found"),

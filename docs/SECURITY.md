@@ -69,6 +69,16 @@
     path (Gemini) are restricted to plain identifiers and percent-encoded
     (ADR-026).
 
+## Dashboard access
+
+-   Operator only, with an admin token of at least 32 characters from
+    the environment, separate from client API keys (ADR-036).
+-   Served on its own internal listener, never the public port.
+-   The browser holds only an expiring session ID in an `HttpOnly`,
+    `SameSite=Strict` cookie; login and logout check `Origin`.
+-   Failed logins are limited, logged, and counted.
+-   Read-only until operator actions have audit records.
+
 ## Secret handling
 
 -   Keep `.env` out of source control.

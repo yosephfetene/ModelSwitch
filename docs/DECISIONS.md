@@ -821,3 +821,58 @@ its budget across a month boundary. A key with no budget is unlimited, so
 capping a total bill needs a budget on every key. Each budgeted request
 sums the key's records for the month; a running total can replace that if
 volumes make it slow. There is no server-wide budget yet.
+
+## ADR-036 --- Dashboard: operator only, on its own port, with sessions
+
+**Status:** Accepted.
+
+**Context:** Stage 4 adds a dashboard of request history. The records
+show every client's traffic and spending, and ADR-012 left key
+management on the server until an authenticated admin interface exists.
+The dashboard needs a read API, a way to log in, and a way to reach the
+browser, without weakening the public port.
+
+**Decision:**
+
+-   *Who:* only the operator. One admin token, at least 32 characters,
+    is read from the environment variable `admin.token_env` names. It is
+    separate from client API keys, so a leaked dashboard login cannot
+    call `/v1/generate`, and a leaked API key cannot open the dashboard.
+    The dashboard starts read-only: changing keys or prices from it
+    needs audit records first.
+-   *Where:* its own listener, `admin.bind` (`127.0.0.1:9091` in the
+    example), opened only when `[admin]` is configured, as metrics is
+    (ADR-030). It must differ from `server.bind` and `metrics.bind`. The
+    network keeps strangers away and the token checks the operator.
+    Remote access goes through an SSH tunnel or a reverse proxy.
+-   *Login:* `POST /admin/api/login` checks the token once by comparing
+    SHA-256 hashes on every byte. The browser then holds only a random
+    32-byte session ID in a cookie that is `HttpOnly` (page scripts
+    cannot read it), `SameSite=Strict` (other sites cannot make the
+    browser send it), limited to `/admin/api`, and expires after
+    `admin.session_hours` (default 12, at most 168). Using a session
+    does not extend it. Sessions are kept in memory as hashes, at most
+    64, so a restart logs the operator out. Login and logout also
+    require an `Origin` matching `Host`. After 5 failed logins in a
+    minute, every login is refused with `429 login_throttled` and
+    `Retry-After` until the oldest failure is a minute old; failures
+    are logged and counted in `admin_login_failures_total`. The cookie
+    has no `Secure` flag because the listener speaks plain HTTP on this
+    machine; a TLS proxy in front can add it.
+-   *Serving the page:* the dashboard is built with Node into plain
+    files, and the admin listener serves them from a configured folder.
+    Rust builds and tests never need Node.
+-   *Routing reason:* shown from what is already stored: the requested
+    model (alias or pin) and the attempt chain, such as "rejected key,
+    fell back, answered". A stored `routing_reason` waits for Stage 5,
+    when adaptive routing makes decisions that attempts cannot explain.
+-   *Frontend:* Vite, React, TypeScript, Vitest with Testing Library,
+    plain CSS, and the browser's `fetch`. CI type-checks, tests, builds,
+    and audits it.
+
+**Consequences:** The public port and its middleware are unchanged. The
+token never reaches page scripts, and a stolen cookie stops working
+when it expires or the operator logs out. A restart means logging in
+again. Only one operator role exists, so the dashboard has no per-user
+views; per-client access would need its own decision. Admin responses
+carry `Cache-Control: no-store`.
