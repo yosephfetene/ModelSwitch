@@ -48,6 +48,16 @@ per_key = 10
 # no second port. Must differ from server.bind.
 bind = "127.0.0.1:9090"
 
+# Dashboard (ADR-036). Internal address for the dashboard and its API,
+# with its own login. Remove this section to open no admin port. The
+# token lives in the named environment variable (at least 32
+# characters); the file never holds it.
+# [admin]
+# bind = "127.0.0.1:9091"
+# token_env = "MODELSWITCH_ADMIN_TOKEN"
+# How long a login lasts (1-168 hours).
+# session_hours = 12
+
 # Providers by name. `adapter` is the wire format; more adapters arrive
 # with their slices. `timeout_ms` bounds one call (1000-300000, default 30000).
 [providers.echo]

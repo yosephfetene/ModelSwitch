@@ -15,6 +15,7 @@ use std::time::Duration;
 use secrecy::SecretString;
 use serde::Deserialize;
 
+use crate::auth::admin::MIN_TOKEN_CHARS;
 use crate::domain::Target;
 use crate::rate_limit::RateLimit;
 use crate::reliability::Limits;
@@ -31,6 +32,9 @@ pub struct Config {
     /// How far each request may go (ADR-028).
     pub reliability: Limits,
     pub metrics: MetricsConfig,
+    /// The dashboard's internal listener and login (ADR-036). `None`
+    /// opens no listener.
+    pub admin: Option<AdminConfig>,
     /// The limit applied to each API key (ADR-031).
     pub rate_limit: RateLimit,
     /// Requests each API key may have running at once (ADR-032).
@@ -72,6 +76,16 @@ pub struct MetricsConfig {
     /// Internal address for `GET /metrics` (ADR-030). `None` opens no
     /// listener.
     pub bind: Option<SocketAddr>,
+}
+
+#[derive(Debug)]
+pub struct AdminConfig {
+    /// Internal address for the dashboard and its API.
+    pub bind: SocketAddr,
+    /// The operator's login secret. `SecretString` prints `[REDACTED]`.
+    pub token: SecretString,
+    /// How long a login lasts.
+    pub session_ttl: Duration,
 }
 
 #[derive(Debug)]
@@ -143,6 +157,8 @@ pub struct FileConfig {
     pub reliability: FileReliability,
     #[serde(default)]
     pub metrics: FileMetrics,
+    #[serde(default)]
+    pub admin: Option<FileAdmin>,
     #[serde(default)]
     pub rate_limit: FileRateLimit,
     #[serde(default)]
@@ -237,6 +253,19 @@ impl Default for FileReliability {
 #[serde(deny_unknown_fields)]
 pub struct FileMetrics {
     pub bind: Option<SocketAddr>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileAdmin {
+    pub bind: SocketAddr,
+    pub token_env: String,
+    #[serde(default = "default_session_hours")]
+    pub session_hours: u64,
+}
+
+fn default_session_hours() -> u64 {
+    12
 }
 
 #[derive(Debug, Deserialize)]
@@ -339,6 +368,7 @@ fn default_log_format() -> LogFormat {
     LogFormat::Pretty
 }
 
+const SESSION_HOURS_RANGE: std::ops::RangeInclusive<u64> = 1..=168;
 const CONCURRENCY_PER_KEY_RANGE: std::ops::RangeInclusive<u32> = 1..=10_000;
 const MAX_CONNECTIONS_RANGE: std::ops::RangeInclusive<u32> = 1..=100;
 const DATABASE_TIMEOUT_MS_RANGE: std::ops::RangeInclusive<u64> = 100..=10_000;
@@ -468,6 +498,11 @@ impl Config {
             );
         }
 
+        let admin = file
+            .admin
+            .as_ref()
+            .and_then(|admin| validate_admin(admin, &file, &env, &mut problems));
+
         for (field, value) in [
             ("requests_per_minute", file.rate_limit.requests_per_minute),
             ("burst", file.rate_limit.burst),
@@ -533,6 +568,7 @@ impl Config {
                 metrics: MetricsConfig {
                     bind: file.metrics.bind,
                 },
+                admin,
                 rate_limit: RateLimit {
                     requests_per_minute: file.rate_limit.requests_per_minute,
                     burst: file.rate_limit.burst,
@@ -558,6 +594,67 @@ impl Config {
                 .map(|(name, provider)| (name.clone(), provider.models.clone())),
             self.aliases.clone(),
         )
+    }
+}
+
+/// Checks `[admin]`. The token is checked for length but never printed.
+fn validate_admin(
+    admin: &FileAdmin,
+    file: &FileConfig,
+    env: &impl Fn(&str) -> Option<String>,
+    problems: &mut Vec<String>,
+) -> Option<AdminConfig> {
+    let before = problems.len();
+    if admin.bind == file.server.bind {
+        problems.push(
+            "admin.bind: must differ from server.bind, or the public port would expose it"
+                .to_owned(),
+        );
+    }
+    if Some(admin.bind) == file.metrics.bind {
+        problems.push("admin.bind: must differ from metrics.bind".to_owned());
+    }
+    if !SESSION_HOURS_RANGE.contains(&admin.session_hours) {
+        problems.push(format!(
+            "admin.session_hours: must be between {} and {}",
+            SESSION_HOURS_RANGE.start(),
+            SESSION_HOURS_RANGE.end()
+        ));
+    }
+
+    let var = admin.token_env.trim();
+    let token = if var.is_empty() {
+        problems.push("admin.token_env: must name an environment variable".to_owned());
+        None
+    } else {
+        match env(var) {
+            Some(value) if value.trim().chars().count() >= MIN_TOKEN_CHARS => {
+                Some(SecretString::from(value.trim().to_owned()))
+            }
+            // Name the variable, never print a value.
+            Some(value) if !value.trim().is_empty() => {
+                problems.push(format!(
+                    "admin.token_env: environment variable {var} must hold at least \
+                     {MIN_TOKEN_CHARS} characters"
+                ));
+                None
+            }
+            _ => {
+                problems.push(format!(
+                    "admin.token_env: environment variable {var} is not set"
+                ));
+                None
+            }
+        }
+    };
+
+    match token {
+        Some(token) if problems.len() == before => Some(AdminConfig {
+            bind: admin.bind,
+            token,
+            session_ttl: Duration::from_secs(admin.session_hours * 3600),
+        }),
+        _ => None,
     }
 }
 
@@ -943,6 +1040,106 @@ mod tests {
             .to_string();
 
         assert!(error.contains("metrics.bind"), "{error}");
+    }
+
+    const ADMIN_TOKEN: &str = "admin-token-for-tests-0123456789abcdef";
+
+    fn env_with_admin(name: &str) -> Option<String> {
+        match name {
+            "ADMIN_TOKEN" => Some(ADMIN_TOKEN.to_owned()),
+            "SHORT_TOKEN" => Some("x".repeat(MIN_TOKEN_CHARS - 1)),
+            _ => env_with_url(name),
+        }
+    }
+
+    fn with_admin(section: &str) -> String {
+        format!("{VALID}\n[admin]\n{section}\n")
+    }
+
+    #[test]
+    fn admin_listener_is_off_unless_configured() {
+        let config = Config::from_toml(VALID, env_with_admin).unwrap();
+        assert!(config.admin.is_none());
+
+        let text = with_admin("bind = \"127.0.0.1:9091\"\ntoken_env = \"ADMIN_TOKEN\"");
+        let admin = Config::from_toml(&text, env_with_admin)
+            .unwrap()
+            .admin
+            .unwrap();
+
+        assert_eq!(admin.bind, "127.0.0.1:9091".parse().unwrap());
+        assert_eq!(admin.token.expose_secret(), ADMIN_TOKEN);
+        assert_eq!(admin.session_ttl, Duration::from_secs(12 * 3600));
+    }
+
+    #[test]
+    fn admin_session_hours_can_be_set_within_range() {
+        let text = with_admin(
+            "bind = \"127.0.0.1:9091\"\ntoken_env = \"ADMIN_TOKEN\"\nsession_hours = 168",
+        );
+        let admin = Config::from_toml(&text, env_with_admin)
+            .unwrap()
+            .admin
+            .unwrap();
+        assert_eq!(admin.session_ttl, Duration::from_secs(168 * 3600));
+
+        for hours in [0, 169] {
+            let text = with_admin(&format!(
+                "bind = \"127.0.0.1:9091\"\ntoken_env = \"ADMIN_TOKEN\"\nsession_hours = {hours}"
+            ));
+            let error = Config::from_toml(&text, env_with_admin)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("admin.session_hours"), "{error}");
+        }
+    }
+
+    #[test]
+    fn admin_token_problems_name_the_variable_but_never_the_value() {
+        let short = "x".repeat(MIN_TOKEN_CHARS - 1);
+        for (var, expected) in [
+            (
+                "SHORT_TOKEN",
+                "SHORT_TOKEN must hold at least 32 characters",
+            ),
+            ("MISSING_TOKEN", "MISSING_TOKEN is not set"),
+            (" ", "admin.token_env: must name an environment variable"),
+        ] {
+            let text = with_admin(&format!("bind = \"127.0.0.1:9091\"\ntoken_env = \"{var}\""));
+            let error = Config::from_toml(&text, env_with_admin)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+            assert!(!error.contains(&short), "{error}");
+        }
+    }
+
+    #[test]
+    fn admin_cannot_share_another_listeners_address() {
+        for (bind, expected) in [
+            ("127.0.0.1:8080", "admin.bind: must differ from server.bind"),
+            (
+                "127.0.0.1:9090",
+                "admin.bind: must differ from metrics.bind",
+            ),
+        ] {
+            let text = format!(
+                "{VALID}\n[metrics]\nbind = \"127.0.0.1:9090\"\n[admin]\nbind = \"{bind}\"\n\
+                 token_env = \"ADMIN_TOKEN\"\n"
+            );
+            let error = Config::from_toml(&text, env_with_admin)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn debug_output_hides_the_admin_token() {
+        let text = with_admin("bind = \"127.0.0.1:9091\"\ntoken_env = \"ADMIN_TOKEN\"");
+        let config = Config::from_toml(&text, env_with_admin).unwrap();
+
+        assert!(!format!("{config:?}").contains(ADMIN_TOKEN));
     }
 
     #[test]

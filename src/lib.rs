@@ -22,4 +22,4 @@ pub mod reliability;
 pub mod routing;
 pub mod storage;
 
-pub use app::{AppState, build_metrics_router, build_router};
+pub use app::{AppState, build_admin_router, build_metrics_router, build_router};

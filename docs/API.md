@@ -194,6 +194,27 @@ change. Codes implemented so far: `invalid_request` (400), `unauthorized`
     deployment policy. Must not disclose credentials or connection
     strings.
 
+## Admin API
+
+The dashboard's API is served only on the internal admin listener,
+`admin.bind`, never on the public port (ADR-036). It uses a session
+cookie, not an API key.
+
+-   `POST /admin/api/login` with `{"token": "..."}` checks the admin
+    token. Success is `204` with a `Set-Cookie` for `ms_admin_session`
+    (`HttpOnly; SameSite=Strict; Path=/admin/api`). A wrong token is
+    `401 login_failed`; after 5 failures in a minute every login gets
+    `429 login_throttled` with `Retry-After`.
+-   `POST /admin/api/logout` ends the session and clears the cookie
+    (`204`), with or without a session.
+-   `GET /admin/api/session` returns `{"expires_in_secs": n}` for a
+    live session.
+
+Without a live session, admin routes return `401 login_required`.
+Login and logout need an `Origin` header matching the listener's own
+address, or they return `403 forbidden`. Every admin response carries
+`Cache-Control: no-store`.
+
 ## Contract rules
 
 -   Enforce request-body size limits.

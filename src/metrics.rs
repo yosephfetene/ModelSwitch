@@ -26,6 +26,7 @@ struct Counters {
     concurrency_limited: u64,
     unpriced_requests: u64,
     budget_exceeded: u64,
+    admin_login_failures: u64,
 }
 
 /// Totals since the process started. Shared by the request path, which
@@ -82,6 +83,12 @@ impl Metrics {
     /// (ADR-035).
     pub fn record_budget_exceeded(&self) {
         self.counters().budget_exceeded += 1;
+    }
+
+    /// Counts a dashboard login with the wrong admin token (ADR-036). Any
+    /// rise is worth a look: only the operator should be logging in.
+    pub fn record_admin_login_failure(&self) {
+        self.counters().admin_login_failures += 1;
     }
 
     /// The Prometheus text exposition format.
@@ -156,6 +163,17 @@ impl Metrics {
             "Requests refused because a key's monthly budget was spent.",
         );
         let _ = writeln!(page, "budget_exceeded_total {}", counters.budget_exceeded);
+
+        header(
+            &mut page,
+            "admin_login_failures_total",
+            "Dashboard logins refused for a wrong admin token.",
+        );
+        let _ = writeln!(
+            page,
+            "admin_login_failures_total {}",
+            counters.admin_login_failures
+        );
         page
     }
 }
