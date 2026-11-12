@@ -13,6 +13,7 @@ pub mod cli;
 pub mod concurrency;
 pub mod config;
 pub mod domain;
+pub mod history;
 pub mod metrics;
 pub mod observability;
 pub mod pricing;

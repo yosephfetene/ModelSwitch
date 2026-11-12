@@ -11,6 +11,7 @@
 //! token nor a session ID is ever logged.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
@@ -29,6 +30,7 @@ use tokio::time::Instant;
 use crate::api::error::ApiError;
 use crate::auth::admin::{AdminToken, LoginThrottle, Sessions};
 use crate::config::AdminConfig;
+use crate::history::HistoryStore;
 use crate::metrics::Metrics;
 
 /// The session cookie's name.
@@ -45,15 +47,25 @@ pub struct AdminState {
     pub sessions: Arc<Sessions>,
     pub throttle: Arc<LoginThrottle>,
     pub metrics: Arc<Metrics>,
+    /// Request history, a trait object so tests can substitute a fake.
+    pub history: Arc<dyn HistoryStore>,
+    /// Upper bound on each history read.
+    pub database_timeout: Duration,
 }
 
 impl AdminState {
-    pub fn new(config: &AdminConfig, metrics: Arc<Metrics>) -> Self {
+    pub fn new(
+        config: &AdminConfig,
+        metrics: Arc<Metrics>,
+        history: Arc<dyn HistoryStore>,
+    ) -> Self {
         Self {
             token: AdminToken::new(&config.token),
             sessions: Arc::new(Sessions::new(config.session_ttl)),
             throttle: Arc::default(),
             metrics,
+            history,
+            database_timeout: config.database_timeout,
         }
     }
 }
@@ -67,6 +79,7 @@ pub struct AdminSession {
 pub fn router(state: &AdminState) -> Router<AdminState> {
     let protected = Router::new()
         .route("/admin/api/session", get(session))
+        .merge(crate::api::history::router())
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_session,

@@ -27,6 +27,9 @@ use modelswitch::auth::api_key::{KeyEnvironment, KeyHash, NewApiKey};
 use modelswitch::budget::{BudgetDecision, BudgetStore, BudgetStoreError};
 use modelswitch::concurrency::ConcurrencyLimiter;
 use modelswitch::domain::{GenerateRequest, Generation, Provider, ProviderError, Target, Usage};
+use modelswitch::history::{
+    HistoryFilter, HistoryPage, HistoryStore, HistoryStoreError, RequestDetail,
+};
 use modelswitch::providers::Registry;
 use modelswitch::rate_limit::{RateLimit, RateLimiter, TokenBucketLimiter};
 use modelswitch::reliability::Limits;
@@ -258,6 +261,81 @@ impl RecordStore for FakeRecordStore {
                     Ok(Cost::NoUsage)
                 }
                 DbMode::Down => Err(RecordStoreError(SENSITIVE_ERROR.to_owned())),
+                DbMode::Hang => std::future::pending().await,
+            }
+        })
+    }
+}
+
+/// A history store whose answers and availability the test controls.
+/// Keeps every filter and ID it was asked about.
+#[derive(Clone)]
+pub struct FakeHistoryStore {
+    mode: Arc<Mutex<DbMode>>,
+    page: Arc<Mutex<HistoryPage>>,
+    details: Arc<Mutex<HashMap<String, RequestDetail>>>,
+    filters: Arc<Mutex<Vec<HistoryFilter>>>,
+    gets: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeHistoryStore {
+    pub fn new(mode: DbMode) -> Self {
+        Self {
+            mode: Arc::new(Mutex::new(mode)),
+            page: Arc::new(Mutex::new(HistoryPage {
+                requests: Vec::new(),
+                next_before: None,
+            })),
+            details: Arc::default(),
+            filters: Arc::default(),
+            gets: Arc::default(),
+        }
+    }
+
+    pub fn set_page(&self, page: HistoryPage) {
+        *self.page.lock().unwrap() = page;
+    }
+
+    pub fn add_detail(&self, detail: RequestDetail) {
+        let id = detail.summary.id.clone();
+        self.details.lock().unwrap().insert(id, detail);
+    }
+
+    pub fn filters(&self) -> Vec<HistoryFilter> {
+        self.filters.lock().unwrap().clone()
+    }
+
+    pub fn gets(&self) -> Vec<String> {
+        self.gets.lock().unwrap().clone()
+    }
+}
+
+impl HistoryStore for FakeHistoryStore {
+    fn list<'a>(
+        &'a self,
+        filter: &'a HistoryFilter,
+    ) -> BoxFuture<'a, Result<HistoryPage, HistoryStoreError>> {
+        let mode = *self.mode.lock().unwrap();
+        Box::pin(async move {
+            self.filters.lock().unwrap().push(filter.clone());
+            match mode {
+                DbMode::Up => Ok(self.page.lock().unwrap().clone()),
+                DbMode::Down => Err(HistoryStoreError(SENSITIVE_ERROR.to_owned())),
+                DbMode::Hang => std::future::pending().await,
+            }
+        })
+    }
+
+    fn get<'a>(
+        &'a self,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<RequestDetail>, HistoryStoreError>> {
+        let mode = *self.mode.lock().unwrap();
+        Box::pin(async move {
+            self.gets.lock().unwrap().push(id.to_owned());
+            match mode {
+                DbMode::Up => Ok(self.details.lock().unwrap().get(id).cloned()),
+                DbMode::Down => Err(HistoryStoreError(SENSITIVE_ERROR.to_owned())),
                 DbMode::Hang => std::future::pending().await,
             }
         })
