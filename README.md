@@ -9,8 +9,27 @@ bounded failover, usage/cost accounting, and operational visibility.
 and Gemini adapters, bounded retries and fallback, per-request and
 per-attempt records, and metrics on an internal port. Each key can have
 an expiry and a monthly budget, and has rate and concurrency limits.
-Versioned prices give each request an estimated cost. The dashboard and
-adaptive routing are later stages (see [the roadmap](docs/ROADMAP.md)).
+Versioned prices give each request an estimated cost. A read-only
+operator dashboard shows request history (Stage 4, in progress);
+adaptive routing is a later stage (see [the roadmap](docs/ROADMAP.md)).
+
+## Dashboard
+
+An operator-only page on the internal admin port lists every recorded
+request: which key sent it, what was asked for, which provider
+answered after retries and fallback, latency, reported tokens, and
+exact estimated cost. Usage a provider did not report stays "—", never
+0.
+
+![Request history: newest requests with provider, status, attempts, latency, tokens, and cost](docs/images/dashboard-history.png)
+
+Filtered to failures, the stored error codes show why each request
+failed, such as a rejected Gemini key after fallback was exhausted:
+
+![Request history filtered to failed requests](docs/images/dashboard-failed.png)
+
+The dashboard is not hosted publicly; it runs beside the gateway (see
+step 7 below and ADR-036).
 
 ## Goals
 
