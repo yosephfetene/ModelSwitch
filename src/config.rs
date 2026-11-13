@@ -88,6 +88,9 @@ pub struct AdminConfig {
     pub session_ttl: Duration,
     /// Upper bound on each dashboard read from the database.
     pub database_timeout: Duration,
+    /// The built dashboard (`index.html` and `assets/`). `None` serves
+    /// only the API.
+    pub dashboard_dir: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -266,6 +269,7 @@ pub struct FileAdmin {
     pub session_hours: u64,
     #[serde(default = "default_admin_database_timeout_ms")]
     pub database_timeout_ms: u64,
+    pub dashboard_dir: Option<PathBuf>,
 }
 
 /// Dashboard reads scan more rows than a key lookup, so they get longer.
@@ -639,6 +643,14 @@ fn validate_admin(
         ));
     }
 
+    if admin
+        .dashboard_dir
+        .as_ref()
+        .is_some_and(|dir| dir.as_os_str().is_empty())
+    {
+        problems.push("admin.dashboard_dir: must name a folder, or be left out".to_owned());
+    }
+
     let var = admin.token_env.trim();
     let token = if var.is_empty() {
         problems.push("admin.token_env: must name an environment variable".to_owned());
@@ -671,6 +683,7 @@ fn validate_admin(
             token,
             session_ttl: Duration::from_secs(admin.session_hours * 3600),
             database_timeout: Duration::from_millis(admin.database_timeout_ms),
+            dashboard_dir: admin.dashboard_dir.clone(),
         }),
         _ => None,
     }
@@ -1136,6 +1149,29 @@ database_timeout_ms = {ms}"
                 .to_string();
             assert!(error.contains("admin.session_hours"), "{error}");
         }
+    }
+
+    #[test]
+    fn admin_dashboard_dir_is_optional_but_not_empty() {
+        let base = "bind = \"127.0.0.1:9091\"\ntoken_env = \"ADMIN_TOKEN\"";
+        let admin = Config::from_toml(&with_admin(base), env_with_admin)
+            .unwrap()
+            .admin
+            .unwrap();
+        assert_eq!(admin.dashboard_dir, None);
+
+        let text = with_admin(&format!("{base}\ndashboard_dir = \"dashboard/dist\""));
+        let admin = Config::from_toml(&text, env_with_admin)
+            .unwrap()
+            .admin
+            .unwrap();
+        assert_eq!(admin.dashboard_dir, Some(PathBuf::from("dashboard/dist")));
+
+        let text = with_admin(&format!("{base}\ndashboard_dir = \"\""));
+        let error = Config::from_toml(&text, env_with_admin)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("admin.dashboard_dir"), "{error}");
     }
 
     #[test]

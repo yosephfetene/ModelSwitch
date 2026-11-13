@@ -5,4 +5,5 @@ target
 .claude
 .env
 modelswitch.toml
-docs
+docsdashboard/node_modules
+dashboard/dist

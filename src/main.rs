@@ -243,6 +243,16 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     }
 
     if let Some(admin) = &config.admin {
+        // A missing build is a setup mistake: say so now, not as a 404 later.
+        if let Some(dir) = &admin.dashboard_dir
+            && !dir.join("index.html").is_file()
+        {
+            anyhow::bail!(
+                "admin.dashboard_dir: {} has no index.html; build the dashboard \
+                 (npm run build in dashboard/) or remove the setting",
+                dir.display()
+            );
+        }
         let listener = tokio::net::TcpListener::bind(admin.bind)
             .await
             .with_context(|| format!("failed to bind admin address {}", admin.bind))?;

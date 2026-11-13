@@ -77,6 +77,11 @@
 -   The browser holds only an expiring session ID in an `HttpOnly`,
     `SameSite=Strict` cookie; login and logout check `Origin`.
 -   Failed logins are limited, logged, and counted.
+-   The page is served only from `index.html` and `assets/` in
+    `admin.dashboard_dir`, under a Content Security Policy that allows
+    scripts, styles, and requests from the admin listener only and
+    forbids framing. The token is sent once at login and never stored
+    by the page.
 -   Read-only until operator actions have audit records.
 
 ## Secret handling

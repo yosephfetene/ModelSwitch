@@ -61,7 +61,8 @@ unmeasured performance claims.
 6.  Docker image build
 7.  Secret scanning and dependency review
 
-Add frontend checks once the dashboard exists.
+8.  Dashboard: `npm ci`, type-check, Vitest with Testing Library
+    against a fake `fetch`, production build, and `npm audit`
 
 ## Definition of done
 

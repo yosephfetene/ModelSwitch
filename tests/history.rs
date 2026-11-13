@@ -43,6 +43,7 @@ async fn admin(mode: DbMode) -> Admin {
         token: SecretString::from(TOKEN),
         session_ttl: Duration::from_secs(3600),
         database_timeout: Duration::from_secs(1),
+        dashboard_dir: None,
     };
     let app = build_admin_router(AdminState::new(
         &config,

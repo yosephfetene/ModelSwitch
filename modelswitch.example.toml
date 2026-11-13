@@ -59,6 +59,9 @@ bind = "127.0.0.1:9090"
 # session_hours = 12
 # How long each dashboard read waits for the database (100-10000 ms).
 # database_timeout_ms = 3000
+# The built page (`npm run build` in dashboard/), relative to where the
+# server starts. Without it, only the API is served.
+# dashboard_dir = "dashboard/dist"
 
 # Providers by name. `adapter` is the wire format; more adapters arrive
 # with their slices. `timeout_ms` bounds one call (1000-300000, default 30000).

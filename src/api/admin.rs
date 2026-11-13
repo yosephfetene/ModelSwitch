@@ -4,12 +4,15 @@
 //!   session cookie: `HttpOnly`, so page scripts cannot read it, and
 //!   `SameSite=Strict`, so other sites cannot make the browser send it.
 //! - `POST /admin/api/logout` ends the session.
-//! - Every other route needs a live session.
+//! - Every other API route needs a live session.
+//! - With `admin.dashboard_dir` set, the page itself is served at `/`
+//!   (see `api::dashboard`). It holds no data; it calls this API.
 //!
 //! Login and logout also need an `Origin` matching the page's own
 //! address, so a page on another site cannot drive them. Neither the
 //! token nor a session ID is ever logged.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -51,6 +54,8 @@ pub struct AdminState {
     pub history: Arc<dyn HistoryStore>,
     /// Upper bound on each history read.
     pub database_timeout: Duration,
+    /// The built dashboard to serve, if any.
+    pub dashboard_dir: Option<PathBuf>,
 }
 
 impl AdminState {
@@ -66,6 +71,7 @@ impl AdminState {
             metrics,
             history,
             database_timeout: config.database_timeout,
+            dashboard_dir: config.dashboard_dir.clone(),
         }
     }
 }
@@ -84,7 +90,7 @@ pub fn router(state: &AdminState) -> Router<AdminState> {
             state.clone(),
             require_session,
         ));
-    Router::new()
+    let api = Router::new()
         .route(
             "/admin/api/login",
             post(login).layer(DefaultBodyLimit::max(MAX_LOGIN_BODY_BYTES)),
@@ -92,7 +98,11 @@ pub fn router(state: &AdminState) -> Router<AdminState> {
         .route("/admin/api/logout", post(logout))
         .merge(protected)
         // Admin answers describe private state: never keep a copy.
-        .layer(middleware::map_response(no_store))
+        .layer(middleware::map_response(no_store));
+    match &state.dashboard_dir {
+        Some(dir) => api.merge(crate::api::dashboard::router(dir)),
+        None => api,
+    }
 }
 
 async fn no_store(mut response: Response) -> Response {

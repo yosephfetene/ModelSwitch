@@ -35,6 +35,7 @@ fn admin(session_hours: u64) -> Admin {
         token: SecretString::from(TOKEN),
         session_ttl: Duration::from_secs(session_hours * 3600),
         database_timeout: Duration::from_secs(1),
+        dashboard_dir: None,
     };
     let metrics = Arc::new(Metrics::default());
     Admin {

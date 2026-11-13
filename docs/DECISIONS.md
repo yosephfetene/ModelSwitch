@@ -868,8 +868,14 @@ browser, without weakening the public port.
     failures are `503`. Costs are exact decimal strings, because JSON
     numbers would round them; times are UTC.
 -   *Serving the page:* the dashboard is built with Node into plain
-    files, and the admin listener serves them from a configured folder.
-    Rust builds and tests never need Node.
+    files, and the admin listener serves them from
+    `admin.dashboard_dir`: `index.html` at `/` and `assets/` beneath
+    it, nothing else in the folder. Page responses carry a strict
+    Content Security Policy (same origin only, no inline scripts, no
+    framing). The server refuses to start if the folder has no
+    `index.html`. Rust builds and tests never need Node. During
+    development, Vite serves the page and forwards `/admin/api` to the
+    admin port, keeping the `Host` header so the `Origin` check passes.
 -   *Routing reason:* shown from what is already stored: the requested
     model (alias or pin) and the attempt chain, such as "rejected key,
     fell back, answered". A stored `routing_reason` waits for Stage 5,
