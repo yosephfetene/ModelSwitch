@@ -12,7 +12,7 @@ use axum::http::{Request, StatusCode};
 use secrecy::SecretString;
 use serde_json::json;
 
-use common::{CapturedLogs, DbMode, FakeDatabase, TestResponse, send, state};
+use common::{CapturedLogs, DbMode, FakeDatabase, FakeHistoryStore, TestResponse, send, state};
 use modelswitch::api::admin::{AdminState, SESSION_COOKIE};
 use modelswitch::auth::admin::{FAILED_LOGIN_WINDOW, MAX_FAILED_LOGINS};
 use modelswitch::config::AdminConfig;
@@ -34,10 +34,15 @@ fn admin(session_hours: u64) -> Admin {
         bind: HOST.parse().unwrap(),
         token: SecretString::from(TOKEN),
         session_ttl: Duration::from_secs(session_hours * 3600),
+        database_timeout: Duration::from_secs(1),
     };
     let metrics = Arc::new(Metrics::default());
     Admin {
-        app: build_admin_router(AdminState::new(&config, Arc::clone(&metrics))),
+        app: build_admin_router(AdminState::new(
+            &config,
+            Arc::clone(&metrics),
+            Arc::new(FakeHistoryStore::new(DbMode::Up)),
+        )),
         metrics,
     }
 }

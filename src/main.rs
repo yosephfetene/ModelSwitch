@@ -17,6 +17,7 @@ use modelswitch::providers::Registry;
 use modelswitch::rate_limit::TokenBucketLimiter;
 use modelswitch::storage::api_keys::PgKeyStore;
 use modelswitch::storage::budgets::PgBudgetStore;
+use modelswitch::storage::history::PgHistoryStore;
 use modelswitch::storage::request_records::PgRecordStore;
 use modelswitch::storage::{self, PgDatabaseCheck};
 use modelswitch::{
@@ -214,7 +215,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         keys: Arc::new(PgKeyStore::new(pool.clone())),
         auth_timeout: config.auth.database_timeout,
         budgets: Arc::new(PgBudgetStore::new(pool.clone())),
-        records: Arc::new(PgRecordStore::new(pool)),
+        records: Arc::new(PgRecordStore::new(pool.clone())),
         accounting_timeout: config.accounting.database_timeout,
         limits: config.reliability,
         metrics: Arc::default(),
@@ -246,7 +247,8 @@ async fn serve(config: Config) -> anyhow::Result<()> {
             .await
             .with_context(|| format!("failed to bind admin address {}", admin.bind))?;
         tracing::info!(address = %admin.bind, "admin listening");
-        let app = build_admin_router(AdminState::new(admin, Arc::clone(&state.metrics)));
+        let history = Arc::new(PgHistoryStore::new(pool.clone()));
+        let app = build_admin_router(AdminState::new(admin, Arc::clone(&state.metrics), history));
         tokio::spawn(async move {
             if let Err(error) = axum::serve(listener, app).await {
                 tracing::error!(%error, "admin listener stopped");

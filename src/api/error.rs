@@ -48,6 +48,9 @@ pub enum ApiError {
     /// `provider/model` pin.
     #[error("unknown model")]
     UnknownModel,
+    /// No recorded request has this ID (dashboard history).
+    #[error("request not found")]
+    RequestNotFound,
     /// No route matches the path.
     #[error("not found")]
     NotFound,
@@ -94,7 +97,7 @@ impl ApiError {
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnknownModel | Self::ModelNotPriced => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::NotFound | Self::RequestNotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::RateLimited { .. }
             | Self::ConcurrencyLimited
@@ -119,6 +122,7 @@ impl ApiError {
             Self::PayloadTooLarge => "payload_too_large",
             Self::UnknownModel => "unknown_model",
             Self::NotFound => "not_found",
+            Self::RequestNotFound => "request_not_found",
             Self::MethodNotAllowed => "method_not_allowed",
             Self::RateLimited { .. } => "rate_limited",
             Self::ConcurrencyLimited => "concurrency_limited",
@@ -143,6 +147,7 @@ impl ApiError {
             Self::PayloadTooLarge => "The request body is too large.",
             Self::UnknownModel => "The model is not a configured alias or provider/model pin.",
             Self::NotFound => "No route matches this path.",
+            Self::RequestNotFound => "No recorded request has this ID.",
             Self::MethodNotAllowed => "This path does not support this HTTP method.",
             Self::RateLimited { .. } => "Too many requests for this API key. Retry later.",
             Self::ConcurrencyLimited => "This API key has too many requests running. Retry later.",
@@ -229,6 +234,7 @@ mod tests {
             (ApiError::PayloadTooLarge, 413, "payload_too_large"),
             (ApiError::UnknownModel, 422, "unknown_model"),
             (ApiError::NotFound, 404, "not_found"),
+            (ApiError::RequestNotFound, 404, "request_not_found"),
             (ApiError::MethodNotAllowed, 405, "method_not_allowed"),
             (
                 ApiError::RateLimited {

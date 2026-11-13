@@ -210,6 +210,25 @@ cookie, not an API key.
 -   `GET /admin/api/session` returns `{"expires_in_secs": n}` for a
     live session.
 
+-   `GET /admin/api/requests` lists recorded requests, newest first.
+    Optional filters: `from` (inclusive) and `to` (exclusive) as RFC
+    3339 times, `provider`, `status` (`succeeded`, `failed`,
+    `timed_out`), and `limit` (1--200, default 50). The answer is
+    `{"requests": [...], "next_before": "req_..." | null}`; pass
+    `next_before` as `before` for the next page. Pages never repeat or
+    skip a request. Unknown or malformed parameters are
+    `400 invalid_request`.
+-   `GET /admin/api/requests/{id}` returns one request with its
+    `attempts` in order and the `price` its cost used, or
+    `404 request_not_found`.
+
+Each request shows its key by ID, name, and display prefix, never the
+key. Costs are exact decimal strings in USD, such as `"0.000035"`, or
+`null` when unknown; token counts the provider did not report are
+`null`. Times are UTC. If the database fails or misses
+`admin.database_timeout_ms` (default 3000), the answer is
+`503 service_unavailable`.
+
 Without a live session, admin routes return `401 login_required`.
 Login and logout need an `Origin` header matching the listener's own
 address, or they return `403 forbidden`. Every admin response carries

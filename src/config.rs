@@ -86,6 +86,8 @@ pub struct AdminConfig {
     pub token: SecretString,
     /// How long a login lasts.
     pub session_ttl: Duration,
+    /// Upper bound on each dashboard read from the database.
+    pub database_timeout: Duration,
 }
 
 #[derive(Debug)]
@@ -262,6 +264,13 @@ pub struct FileAdmin {
     pub token_env: String,
     #[serde(default = "default_session_hours")]
     pub session_hours: u64,
+    #[serde(default = "default_admin_database_timeout_ms")]
+    pub database_timeout_ms: u64,
+}
+
+/// Dashboard reads scan more rows than a key lookup, so they get longer.
+fn default_admin_database_timeout_ms() -> u64 {
+    3_000
 }
 
 fn default_session_hours() -> u64 {
@@ -622,6 +631,14 @@ fn validate_admin(
         ));
     }
 
+    if !DATABASE_TIMEOUT_MS_RANGE.contains(&admin.database_timeout_ms) {
+        problems.push(format!(
+            "admin.database_timeout_ms: must be between {} and {}",
+            DATABASE_TIMEOUT_MS_RANGE.start(),
+            DATABASE_TIMEOUT_MS_RANGE.end()
+        ));
+    }
+
     let var = admin.token_env.trim();
     let token = if var.is_empty() {
         problems.push("admin.token_env: must name an environment variable".to_owned());
@@ -653,6 +670,7 @@ fn validate_admin(
             bind: admin.bind,
             token,
             session_ttl: Duration::from_secs(admin.session_hours * 3600),
+            database_timeout: Duration::from_millis(admin.database_timeout_ms),
         }),
         _ => None,
     }
@@ -1070,6 +1088,32 @@ mod tests {
         assert_eq!(admin.bind, "127.0.0.1:9091".parse().unwrap());
         assert_eq!(admin.token.expose_secret(), ADMIN_TOKEN);
         assert_eq!(admin.session_ttl, Duration::from_secs(12 * 3600));
+        assert_eq!(admin.database_timeout, Duration::from_millis(3_000));
+    }
+
+    #[test]
+    fn admin_database_timeout_is_bounded() {
+        for (ms, ok) in [(100, true), (10_000, true), (99, false), (10_001, false)] {
+            let text = with_admin(&format!(
+                "bind = \"127.0.0.1:9091\"
+token_env = \"ADMIN_TOKEN\"
+database_timeout_ms = {ms}"
+            ));
+            let result = Config::from_toml(&text, env_with_admin);
+            match result {
+                Ok(config) => {
+                    assert!(ok, "{ms}");
+                    assert_eq!(
+                        config.admin.unwrap().database_timeout,
+                        Duration::from_millis(ms)
+                    );
+                }
+                Err(error) => {
+                    assert!(!ok, "{ms}: {error}");
+                    assert!(error.to_string().contains("admin.database_timeout_ms"));
+                }
+            }
+        }
     }
 
     #[test]

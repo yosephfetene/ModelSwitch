@@ -57,6 +57,8 @@ bind = "127.0.0.1:9090"
 # token_env = "MODELSWITCH_ADMIN_TOKEN"
 # How long a login lasts (1-168 hours).
 # session_hours = 12
+# How long each dashboard read waits for the database (100-10000 ms).
+# database_timeout_ms = 3000
 
 # Providers by name. `adapter` is the wire format; more adapters arrive
 # with their slices. `timeout_ms` bounds one call (1000-300000, default 30000).

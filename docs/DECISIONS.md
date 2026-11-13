@@ -859,6 +859,14 @@ browser, without weakening the public port.
     are logged and counted in `admin_login_failures_total`. The cookie
     has no `Secure` flag because the listener speaks plain HTTP on this
     machine; a TLS proxy in front can add it.
+-   *History API:* `GET /admin/api/requests` lists records newest
+    first, filtered by time, provider, and status, and keyset-paged on
+    `(created_at, id)` so pages never repeat or skip a request while new
+    ones arrive. `GET /admin/api/requests/{id}` adds the attempts and
+    the price used. Filters are checked before the database is asked,
+    each read runs under `admin.database_timeout_ms` (default 3000), and
+    failures are `503`. Costs are exact decimal strings, because JSON
+    numbers would round them; times are UTC.
 -   *Serving the page:* the dashboard is built with Node into plain
     files, and the admin listener serves them from a configured folder.
     Rust builds and tests never need Node.
