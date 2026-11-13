@@ -27,7 +27,7 @@ adaptive routing are later stages (see [the roadmap](docs/ROADMAP.md)).
 -   Backend: Rust, Axum, Tokio
 -   Persistence: PostgreSQL 18, SQLx
 -   Providers: OpenAI-compatible (Groq, Ollama) and Google Gemini
--   Dashboard (later): React, TypeScript
+-   Dashboard: React, TypeScript, Vite
 -   Delivery: Docker, GitHub Actions
 -   Testing: unit, integration, contract, failure-injection, and load
     tests
@@ -115,8 +115,26 @@ Prerequisites: Rust (stable) and PostgreSQL 18.
     example file), using the key from step 5:
 
     ``` bash
-    curl http://127.0.0.1:8080/v1/generate \n      -H "Authorization: Bearer <KEY>" \n      -H "Content-Type: application/json" \n      -d '{"model": "default", "input": "Hello, gateway"}'
+    curl http://127.0.0.1:8080/v1/generate \
+      -H "Authorization: Bearer <KEY>" \
+      -H "Content-Type: application/json" \
+      -d '{"model": "default", "input": "Hello, gateway"}'
     ```
+
+7.  Optional: the operator dashboard (needs Node 24). Uncomment
+    `[admin]` in `modelswitch.toml`, including `dashboard_dir`, set
+    `MODELSWITCH_ADMIN_TOKEN` in `.env` (at least 32 characters), then
+    build the page and restart the server:
+
+    ``` bash
+    cd dashboard && npm ci && npm run build && cd ..
+    cargo run -- serve
+    ```
+
+    Open <http://127.0.0.1:9091/> and log in with the token. While
+    working on the page itself, `npm run dev` in `dashboard/` serves it
+    at <http://127.0.0.1:5173/> with live reload and forwards the API to
+    the running server.
 
 ### With Docker (alternative)
 
@@ -136,7 +154,8 @@ docker compose run --rm modelswitch migrate
 Every pull request runs formatting, lint (warnings are errors), tests
 against PostgreSQL 18, a Docker image build, a secret scan (gitleaks),
 and a dependency audit (`cargo-deny`: known vulnerabilities and a
-permissive-license allowlist; see `deny.toml`).
+permissive-license allowlist; see `deny.toml`). The dashboard is
+type-checked, tested, built, and audited (`npm audit`) in its own job.
 
 ## Documentation
 

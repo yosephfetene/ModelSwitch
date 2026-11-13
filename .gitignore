@@ -7,3 +7,7 @@ modelswitch.toml
 
 # Personal Claude Code settings
 .claude/settings.local.json
+
+# Dashboard dependencies and build output
+/dashboard/node_modules
+/dashboard/dist

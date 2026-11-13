@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod auth;
 pub mod concurrency;
+pub mod dashboard;
 pub mod error;
 pub mod generate;
 pub mod health;

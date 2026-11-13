@@ -234,6 +234,19 @@ Login and logout need an `Origin` header matching the listener's own
 address, or they return `403 forbidden`. Every admin response carries
 `Cache-Control: no-store`.
 
+### Dashboard page
+
+With `admin.dashboard_dir` set to a built dashboard (`dashboard/dist`
+after `npm run build`), the admin listener also serves the page: `GET /`
+returns its `index.html` and `GET /assets/...` the files under
+`assets/`. Nothing else in the folder is served. The page itself holds
+no data, so it needs no session; it calls the API above. Page responses
+carry a Content Security Policy (`default-src 'self'`,
+`frame-ancestors 'none'`, no inline scripts), `X-Content-Type-Options:
+nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and
+`Cache-Control: no-cache`. The server refuses to start if the folder
+has no `index.html`.
+
 ## Contract rules
 
 -   Enforce request-body size limits.
