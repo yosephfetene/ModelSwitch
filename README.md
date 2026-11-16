@@ -28,6 +28,13 @@ failed, such as a rejected Gemini key after fallback was exhausted:
 
 ![Request history filtered to failed requests](docs/images/dashboard-failed.png)
 
+Opening a request shows why it went where it did, built from its stored
+attempts: here Gemini rejected its key, so the gateway fell back to
+Groq, with each attempt's error class and retry decision, the reported
+usage, and the price behind the estimated cost:
+
+![A request's details: routing reason, attempts, usage, cost, and IDs](docs/images/dashboard-panel.png)
+
 The dashboard is not hosted publicly; it runs beside the gateway (see
 step 7 below and ADR-036).
 

@@ -880,6 +880,11 @@ browser, without weakening the public port.
     model (alias or pin) and the attempt chain, such as "rejected key,
     fell back, answered". A stored `routing_reason` waits for Stage 5,
     when adaptive routing makes decisions that attempts cannot explain.
+    The page builds it when a request is opened in a side panel beside
+    the table, with the attempt timeline, usage, the price the cost
+    used, and the IDs. The open request is kept in the URL hash
+    (`#req_...`), so links can be shared and Back closes it, while the
+    server still only ever serves `/`.
 -   *Frontend:* Vite, React, TypeScript, Vitest with Testing Library,
     plain CSS, and the browser's `fetch`. CI type-checks, tests, builds,
     and audits it.

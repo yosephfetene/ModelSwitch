@@ -27,6 +27,31 @@ export interface RequestSummary {
   attempt_count: number;
 }
 
+/** One provider call of a request, in the order they were made. */
+export interface Attempt {
+  number: number;
+  provider: string;
+  model: string;
+  status: Status;
+  error: {
+    kind: string;
+    code: string | null;
+    provider_status: number | null;
+    class: "transient" | "target_problem" | "request_problem" | null;
+  } | null;
+  retry_decision: "not_retried" | "retry" | "fallback" | "exhausted";
+  latency_ms: number;
+}
+
+export interface RequestDetail extends RequestSummary {
+  attempts: Attempt[];
+  /** The price the cost used, in USD per million tokens. */
+  price: { input_usd_per_million: string; output_usd_per_million: string; source: string } | null;
+}
+
+/** The shape of a gateway request ID; anything else is never looked up. */
+export const REQUEST_ID = /^req_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 export interface HistoryPage {
   requests: RequestSummary[];
   next_before: string | null;
@@ -117,4 +142,8 @@ export async function requests(
   signal?: AbortSignal,
 ): Promise<HistoryPage> {
   return (await call(requestsQuery(filters, before), { signal })).json();
+}
+
+export async function requestDetail(id: string, signal?: AbortSignal): Promise<RequestDetail> {
+  return (await call(`/admin/api/requests/${encodeURIComponent(id)}`, { signal })).json();
 }

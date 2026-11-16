@@ -11,3 +11,8 @@ modelswitch.toml
 # Dashboard dependencies and build output
 /dashboard/node_modules
 /dashboard/dist
+
+# Personal agent skills (npx skills); not part of the project
+/.agents
+/.claude/skills
+/skills-lock.json

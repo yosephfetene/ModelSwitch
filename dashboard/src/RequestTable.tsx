@@ -1,7 +1,14 @@
 import type { RequestSummary } from "./api";
 import { STATUS_LABELS, formatCost, formatLatency, formatTime, formatTokens } from "./format";
 
-export function RequestTable({ requests }: { requests: RequestSummary[] }) {
+interface Props {
+  requests: RequestSummary[];
+  /** The request whose details are open, if any. */
+  selected: string | null;
+  onSelect: (id: string) => void;
+}
+
+export function RequestTable({ requests, selected, onSelect }: Props) {
   return (
     <div className="table-wrap">
       <table>
@@ -28,8 +35,27 @@ export function RequestTable({ requests }: { requests: RequestSummary[] }) {
         </thead>
         <tbody>
           {requests.map((request) => (
-            <tr key={request.id}>
-              <td title={request.id}>{formatTime(request.created_at)}</td>
+            <tr
+              key={request.id}
+              className={request.id === selected ? "selected" : undefined}
+              onClick={() => onSelect(request.id)}
+            >
+              <td>
+                {/* A real button, so a keyboard can open the details too. */}
+                <button
+                  type="button"
+                  className="row-link"
+                  title={request.id}
+                  aria-current={request.id === selected ? "true" : undefined}
+                  aria-label={`Details of the request at ${formatTime(request.created_at)}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelect(request.id);
+                  }}
+                >
+                  {formatTime(request.created_at)}
+                </button>
+              </td>
               <td>
                 {request.key.name} <code className="muted">{request.key.prefix}</code>
               </td>
