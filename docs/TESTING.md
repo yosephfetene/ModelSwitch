@@ -35,6 +35,13 @@ Integration tests use `#[sqlx::test]`, which creates a fresh database
 per test and runs migrations, against a local PostgreSQL 18 server or
 the CI service container (ADR-014). Tests never share database state.
 
+The dashboard's reconciliation test (`tests/reconcile_postgres.rs`, the
+Stage 4 exit) sends a first-try answer, a retry, a fallback, a pin, and
+an all-fail request through the gateway, then requires the dashboard
+API to agree with what each client was told, how many calls the
+providers received, the stored rows and attempt chains, and costs
+worked out by hand, across pages and filters.
+
 ## Failure-injection tests
 
 Simulate provider delay, 429/5xx, connection reset, malformed response,

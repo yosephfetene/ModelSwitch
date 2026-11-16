@@ -2,7 +2,7 @@
 
 import { vi } from "vitest";
 
-import type { HistoryPage, RequestSummary } from "../api";
+import type { Attempt, HistoryPage, RequestDetail, RequestSummary } from "../api";
 
 export interface Call {
   method: string;
@@ -43,7 +43,9 @@ export function fakeGateway(routes: Record<string, Handler>) {
       body: typeof init.body === "string" ? init.body : null,
     };
     calls.push(call);
-    const handler = routes[`${call.method} ${call.path}`];
+    // `"GET /admin/api/requests/*"` matches one more path segment.
+    const parent = call.path.slice(0, call.path.lastIndexOf("/"));
+    const handler = routes[`${call.method} ${call.path}`] ?? routes[`${call.method} ${parent}/*`];
     return handler ? handler(call) : apiError(404, "not_found");
   });
   vi.stubGlobal("fetch", fetch);
@@ -65,6 +67,32 @@ export function summary(overrides: Partial<RequestSummary> = {}): RequestSummary
     usage: { input_tokens: 12, output_tokens: 34, total_tokens: 46, source: "provider_reported" },
     cost: { usd: "0.0000375", pricing_version: "0190f5a2-0000-7000-8000-0000000000aa" },
     attempt_count: 1,
+    ...overrides,
+  };
+}
+
+export function attempt(overrides: Partial<Attempt> = {}): Attempt {
+  return {
+    number: 1,
+    provider: "groq",
+    model: "llama-3.1-8b-instant",
+    status: "succeeded",
+    error: null,
+    retry_decision: "not_retried",
+    latency_ms: 400,
+    ...overrides,
+  };
+}
+
+export function detail(overrides: Partial<RequestDetail> = {}): RequestDetail {
+  return {
+    ...summary(),
+    attempts: [attempt()],
+    price: {
+      input_usd_per_million: "0.05",
+      output_usd_per_million: "0.08",
+      source: "https://groq.com/pricing",
+    },
     ...overrides,
   };
 }

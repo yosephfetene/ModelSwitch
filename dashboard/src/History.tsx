@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ApiError, type Filters, type HistoryPage, requests } from "./api";
 import { FilterForm } from "./FilterForm";
+import { RequestPanel } from "./RequestPanel";
 import { RequestTable } from "./RequestTable";
+import { useSelectedRequest } from "./useSelectedRequest";
 
 interface Props {
   /** The session ended or was never valid: back to login. */
@@ -18,6 +20,8 @@ export function History({ onSessionEnded }: Props) {
   const [reloads, setReloads] = useState(0);
   const [page, setPage] = useState<HistoryPage | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [selected, select] = useSelectedRequest();
+  const close = useCallback(() => select(null), [select]);
   const [loading, setLoading] = useState(true);
 
   const before = cursors.at(-1) ?? null;
@@ -54,6 +58,7 @@ export function History({ onSessionEnded }: Props) {
   const nextBefore = page?.next_before ?? null;
 
   return (
+    <div className={selected ? "layout with-panel" : "layout"}>
     <section aria-label="Request history">
       <FilterForm onApply={apply} />
 
@@ -95,10 +100,12 @@ export function History({ onSessionEnded }: Props) {
           </button>
         </div>
       ) : page && page.requests.length > 0 ? (
-        <RequestTable requests={page.requests} />
+        <RequestTable requests={page.requests} selected={selected} onSelect={select} />
       ) : (
         <p className="empty">No requests match these filters.</p>
       )}
     </section>
+    {selected && <RequestPanel id={selected} onClose={close} onSessionEnded={onSessionEnded} />}
+    </div>
   );
 }
