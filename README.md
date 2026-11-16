@@ -169,11 +169,22 @@ docker compose up --build
 ```
 
 This starts PostgreSQL 18 and the gateway on port 8080 with
-development-only credentials. Create the tables with:
+development-only credentials, plus the dashboard at
+<http://127.0.0.1:9091/>, reachable from this machine only. Set
+`MODELSWITCH_ADMIN_TOKEN` in `.env` first (at least 32 characters, see
+`.env.example`); compose stops and says so if it is missing. The image
+builds the dashboard itself, so Docker is the only prerequisite. Create
+the tables with:
 
 ``` bash
 docker compose run --rm modelswitch migrate
 ```
+
+The image's default configuration has no dashboard and needs no admin
+token. To enable it elsewhere, set
+`MODELSWITCH_CONFIG=/etc/modelswitch/modelswitch-admin.toml` and
+publish port 9091 to a loopback address only, for example
+`-p 127.0.0.1:9091:9091`.
 
 ## Continuous integration
 

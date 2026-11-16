@@ -1,3 +1,14 @@
+# Dashboard stage: build the page into plain files (ADR-036). Node lives
+# only here; the runtime image holds just the output.
+FROM node:24.22-trixie-slim AS dashboard
+WORKDIR /dashboard
+# Install from the lockfile first so dependencies are cached until it
+# changes, not on every source edit.
+COPY dashboard/package.json dashboard/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY dashboard/ ./
+RUN npm run build
+
 # Build stage: compile a release binary.
 FROM rust:1.96-slim-trixie AS build
 WORKDIR /app
@@ -26,10 +37,16 @@ RUN apt-get update \
 
 COPY --from=build /app/target/release/modelswitch /usr/local/bin/modelswitch
 COPY deploy/modelswitch.docker.toml /etc/modelswitch/modelswitch.toml
+# The same, plus the dashboard on the admin port. Not the default: it
+# needs MODELSWITCH_ADMIN_TOKEN, and its port must be published to the
+# host's loopback only (see docker-compose.yml).
+COPY deploy/modelswitch.docker-admin.toml /etc/modelswitch/modelswitch-admin.toml
+COPY --from=dashboard /dashboard/dist /usr/share/modelswitch/dashboard
 
 ENV MODELSWITCH_CONFIG=/etc/modelswitch/modelswitch.toml
 USER modelswitch
-EXPOSE 8080
+# 8080: the public API. 9091: the admin port, only with the admin config.
+EXPOSE 8080 9091
 
 # DATABASE_URL must be provided at runtime; it is never baked in.
 ENTRYPOINT ["modelswitch"]
