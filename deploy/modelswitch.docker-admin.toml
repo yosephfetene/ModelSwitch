@@ -1,0 +1,35 @@
+# The Docker image's configuration with the dashboard switched on
+# (ADR-036). Select it with
+#   MODELSWITCH_CONFIG=/etc/modelswitch/modelswitch-admin.toml
+# and set MODELSWITCH_ADMIN_TOKEN (at least 32 characters).
+#
+# Inside a container the admin port must listen on all interfaces, or
+# nothing outside could reach it. Publish it to the host's loopback only,
+# such as `127.0.0.1:9091:9091`, never to every interface.
+
+[server]
+bind = "0.0.0.0:8080"
+
+[database]
+url_env = "DATABASE_URL"
+max_connections = 10
+
+[health]
+database_timeout_ms = 1000
+
+[log]
+format = "json"
+
+[admin]
+bind = "0.0.0.0:9091"
+token_env = "MODELSWITCH_ADMIN_TOKEN"
+# Built into the image by the Dockerfile's dashboard stage.
+dashboard_dir = "/usr/share/modelswitch/dashboard"
+
+# Built-in provider so the image works without provider credentials.
+[providers.echo]
+adapter = "echo"
+models = ["echo-1"]
+
+[aliases.default]
+candidates = ["echo/echo-1"]

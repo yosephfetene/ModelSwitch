@@ -73,7 +73,9 @@
 
 -   Operator only, with an admin token of at least 32 characters from
     the environment, separate from client API keys (ADR-036).
--   Served on its own internal listener, never the public port.
+-   Served on its own internal listener, never the public port. In a
+    container it listens on all interfaces, so publish it to a loopback
+    address only (`127.0.0.1:9091:9091`, as `docker-compose.yml` does).
 -   The browser holds only an expiring session ID in an `HttpOnly`,
     `SameSite=Strict` cookie; login and logout check `Origin`.
 -   Failed logins are limited, logged, and counted.

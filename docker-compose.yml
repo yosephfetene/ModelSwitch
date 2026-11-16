@@ -1,6 +1,8 @@
-# Local stack: PostgreSQL 18 plus ModelSwitch.
+# Local stack: PostgreSQL 18 plus ModelSwitch with its dashboard.
 #   docker compose up --build
-# Credentials here are for local development only.
+# Credentials here are for local development only. The dashboard needs
+# MODELSWITCH_ADMIN_TOKEN (at least 32 characters) in .env next to this
+# file; compose reads it from there and stops with a message if unset.
 
 services:
   postgres:
@@ -19,8 +21,15 @@ services:
     environment:
       DATABASE_URL: postgres://modelswitch:modelswitch@postgres:5432/modelswitch_dev
       RUST_LOG: info
+      # The image's admin config: the default plus the dashboard (ADR-036).
+      MODELSWITCH_CONFIG: /etc/modelswitch/modelswitch-admin.toml
+      MODELSWITCH_ADMIN_TOKEN: ${MODELSWITCH_ADMIN_TOKEN:?set MODELSWITCH_ADMIN_TOKEN in .env (at least 32 characters)}
     ports:
       - "8080:8080"
+      # Inside the container the admin port listens on every interface;
+      # here it is published to this machine's loopback only, so nothing
+      # else on the network can reach the dashboard.
+      - "127.0.0.1:9091:9091"
     # No health condition needed: the gateway starts without the database
     # and reports it through /health/ready until it is reachable (ADR-021).
     depends_on:

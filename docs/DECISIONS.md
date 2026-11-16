@@ -873,7 +873,13 @@ browser, without weakening the public port.
     it, nothing else in the folder. Page responses carry a strict
     Content Security Policy (same origin only, no inline scripts, no
     framing). The server refuses to start if the folder has no
-    `index.html`. Rust builds and tests never need Node. During
+    `index.html`. Rust builds and tests never need Node. The Docker
+    image builds the page in a Node stage and ships only its output;
+    its default configuration leaves the dashboard off, and a second
+    baked-in configuration turns it on. A container's admin port must
+    listen on all interfaces, so the network boundary moves to the
+    publishing rule: `docker-compose.yml` publishes it to the host's
+    loopback only (`127.0.0.1:9091`). During
     development, Vite serves the page and forwards `/admin/api` to the
     admin port, keeping the `Host` header so the `Origin` check passes.
 -   *Routing reason:* shown from what is already stored: the requested

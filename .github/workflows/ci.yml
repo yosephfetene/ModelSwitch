@@ -93,8 +93,35 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: modelswitch:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Start the image with the dashboard on and check it over HTTP. No
+      # database is needed: the gateway starts without one (ADR-021).
+      - name: Smoke-test the image and its dashboard
+        run: |
+          docker run -d --name modelswitch \
+            -e MODELSWITCH_CONFIG=/etc/modelswitch/modelswitch-admin.toml \
+            -e MODELSWITCH_ADMIN_TOKEN=ci-only-admin-token-0123456789abcdef \
+            -e DATABASE_URL=postgres://ci:ci@127.0.0.1:1/ci \
+            -p 127.0.0.1:8080:8080 -p 127.0.0.1:9091:9091 \
+            modelswitch:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/health/live >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/health/live
+          curl -fsS -D headers.txt -o index.html http://127.0.0.1:9091/
+          grep -q '<div id="root">' index.html
+          grep -qi "content-security-policy: default-src 'self'" headers.txt
+          asset=$(grep -o '/assets/[^"]*\.js' index.html | head -n1)
+          curl -fsS -o /dev/null "http://127.0.0.1:9091${asset}"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9091/admin/api/session)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/admin/api/session)" = 404
+      - name: Container logs
+        if: always()
+        run: docker logs modelswitch || true
 
   secrets:
     name: Secret scan
