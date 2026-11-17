@@ -11,7 +11,8 @@ with a changelog (ADR-013).
 |---|---|---|
 | `v0.1.0` | 0--2 | A reliable gateway for a single operator |
 | `v0.2.0` | 3 | Safe to share with other users |
-| Later | 4--6 | Dashboard, adaptive routing, hardening |
+| `v0.3.0` | 4 | See what the gateway did and why |
+| Later | 5--6 | Adaptive routing, hardening |
 
 ## Stage 0 --- Repository baseline
 
@@ -81,7 +82,8 @@ reproducible. Tag `v0.2.0`.
 -   Authenticated access and clear loading/error/empty states
 -   No raw keys or prompts exposed
 
-**Exit:** dashboard values reconcile with stored records.
+**Exit:** dashboard values reconcile with stored records
+(`tests/reconcile_postgres.rs`). Tag `v0.3.0`.
 
 ## Stage 5 --- Benchmark-informed routing
 

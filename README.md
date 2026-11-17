@@ -4,14 +4,15 @@
 applications one API for multiple LLM providers, with explicit routing,
 bounded failover, usage/cost accounting, and operational visibility.
 
-**Status:** Pre-1.0 (roadmap Stage 3 complete). Working today:
+**Status:** Pre-1.0 (roadmap Stage 4 complete). Working today:
 `POST /v1/generate` with API keys, model aliases and pins, Groq, Ollama,
 and Gemini adapters, bounded retries and fallback, per-request and
 per-attempt records, and metrics on an internal port. Each key can have
 an expiry and a monthly budget, and has rate and concurrency limits.
 Versioned prices give each request an estimated cost. A read-only
-operator dashboard shows request history (Stage 4, in progress);
-adaptive routing is a later stage (see [the roadmap](docs/ROADMAP.md)).
+operator dashboard shows request history and explains each routing
+decision; adaptive routing is a later stage (see
+[the roadmap](docs/ROADMAP.md)).
 
 ## Dashboard
 
