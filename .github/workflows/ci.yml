@@ -81,7 +81,14 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - run: npm audit --audit-level=moderate
+      # What ships (react, react-dom) must be clean. Build and test tools
+      # are reported without failing the job, because an advisory there
+      # may have no fixed version yet (ADR-037).
+      - name: Audit shipped dependencies
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: Audit build and test tools (report only)
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
 
   docker:
     name: Docker build

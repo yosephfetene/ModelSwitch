@@ -69,7 +69,8 @@ unmeasured performance claims.
 7.  Secret scanning and dependency review
 
 8.  Dashboard: `npm ci`, type-check, Vitest with Testing Library
-    against a fake `fetch`, production build, and `npm audit`
+    against a fake `fetch`, production build, and `npm audit` (shipped
+    dependencies block; build tools are reported, ADR-037)
 
 ## Definition of done
 
