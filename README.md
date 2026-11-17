@@ -191,8 +191,9 @@ publish port 9091 to a loopback address only, for example
 Every pull request runs formatting, lint (warnings are errors), tests
 against PostgreSQL 18, a Docker image build, a secret scan (gitleaks),
 and a dependency audit (`cargo-deny`: known vulnerabilities and a
-permissive-license allowlist; see `deny.toml`). The dashboard is
-type-checked, tested, built, and audited (`npm audit`) in its own job.
+permissive-license allowlist; see `deny.toml` and ADR-037). The
+dashboard is type-checked, tested, built, and audited (`npm audit`) in
+its own job.
 
 ## Documentation
 

@@ -901,3 +901,30 @@ when it expires or the operator logs out. A restart means logging in
 again. Only one operator role exists, so the dashboard has no per-user
 views; per-client access would need its own decision. Admin responses
 carry `Cache-Control: no-store`.
+
+## ADR-037 --- Advisories with no fix: ignore by ID, block on what ships
+
+**Status:** Accepted.
+
+**Context:** CI fails on any dependency advisory (`cargo deny check`,
+`npm audit`). Two arrived with no fixed version: RUSTSEC-2026-0543
+(`chrono` is unmaintained) and GHSA-fc5q-39xc-vjpf (a ReDoS in
+`picomatch`, used only by Vite and Vitest at build time). Failing until
+upstream ships a fix would block every pull request for an unknown time,
+while dropping the audits would hide the next real problem.
+
+**Decision:**
+
+-   *Rust:* an advisory with no fix may be ignored in `deny.toml` by its
+    ID only, with a reason that says why it is safe for now and what
+    removes it. Every other advisory still fails CI. `chrono` is ignored
+    on these terms and will be replaced by `time` in its own slice.
+-   *Dashboard:* `npm audit --omit=dev` fails the job, because it covers
+    what ships to browsers. The full audit, including build and test
+    tools, still runs and reports but does not fail the job.
+
+**Consequences:** CI stays strict for code that runs in production and
+for every new Rust advisory. An ignored ID must be removed when its
+reason no longer holds. A tool-only npm advisory is visible in the job
+log but needs someone to read it; such advisories are reviewed at each
+release.
