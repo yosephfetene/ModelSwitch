@@ -13,8 +13,9 @@ use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::routing::get;
-use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
+use time::format_description::well_known::Rfc3339;
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::accounting::Outcome;
 use crate::api::admin::AdminState;
@@ -87,12 +88,12 @@ pub fn parse_filter(params: &HashMap<String, String>) -> Result<HistoryFilter, A
         ));
     }
 
-    let time = |name: &str, message| -> Result<Option<DateTime<Utc>>, ApiError> {
+    let time = |name: &str, message| -> Result<Option<OffsetDateTime>, ApiError> {
         params
             .get(name)
             .map(|value| {
-                DateTime::parse_from_rfc3339(value)
-                    .map(|time| time.with_timezone(&Utc))
+                OffsetDateTime::parse(value, &Rfc3339)
+                    .map(|time| time.to_offset(UtcOffset::UTC))
                     .map_err(|_| ApiError::InvalidRequest(message))
             })
             .transpose()

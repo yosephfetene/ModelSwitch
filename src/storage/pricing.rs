@@ -1,8 +1,8 @@
 //! The `pricing_versions` table (ADR-034). Rows are only ever closed,
 //! never edited, so old estimates stay explainable.
 
-use chrono::{DateTime, Utc};
 use sqlx::PgPool;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::domain::Target;
@@ -17,9 +17,9 @@ pub struct PriceRecord {
     pub model: String,
     pub input_usd_per_million: String,
     pub output_usd_per_million: String,
-    pub effective_from: DateTime<Utc>,
+    pub effective_from: OffsetDateTime,
     /// `None` while this is the current price.
-    pub effective_to: Option<DateTime<Utc>>,
+    pub effective_to: Option<OffsetDateTime>,
     pub source_reference: String,
 }
 

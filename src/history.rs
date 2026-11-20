@@ -5,7 +5,7 @@
 //! prompt, an output, or an API key: keys appear only by ID, name, and
 //! display prefix.
 
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::accounting::Outcome;
@@ -20,9 +20,9 @@ pub const DEFAULT_PAGE_SIZE: u32 = 50;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryFilter {
     /// Started at or after this moment.
-    pub from: Option<DateTime<Utc>>,
+    pub from: Option<OffsetDateTime>,
     /// Started before this moment.
-    pub to: Option<DateTime<Utc>>,
+    pub to: Option<OffsetDateTime>,
     /// The provider that answered last (the record's selected provider).
     pub provider: Option<String>,
     pub status: Option<Outcome>,

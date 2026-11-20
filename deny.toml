@@ -10,9 +10,7 @@ all-features = true
 yanked = "deny"
 # Advisories with no fixed version, ignored one by one (ADR-037). Each
 # entry says why it is safe for now and what removes it.
-ignore = [
-    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, not known to be broken, and no release fixes it; removed by replacing chrono with time (see docs/ROADMAP.md)" },
-]
+ignore = []
 
 [licenses]
 # Permissive licenses only. Copyleft licenses (GPL, AGPL, ...) could

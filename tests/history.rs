@@ -10,9 +10,10 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use chrono::{DateTime, Utc};
 use secrecy::SecretString;
 use serde_json::json;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 use common::{CapturedLogs, DbMode, FakeHistoryStore, SENSITIVE_ERROR, TestResponse, send};
@@ -169,7 +170,7 @@ async fn every_filter_is_passed_on() {
         .await;
 
     assert_eq!(response.status, StatusCode::OK, "{}", response.body);
-    let utc = |text: &str| text.parse::<DateTime<Utc>>().unwrap();
+    let utc = |text: &str| OffsetDateTime::parse(text, &Rfc3339).unwrap();
     assert_eq!(
         h.history.filters(),
         vec![HistoryFilter {
@@ -181,6 +182,39 @@ async fn every_filter_is_passed_on() {
             limit: 200,
         }]
     );
+}
+
+#[tokio::test]
+async fn every_rfc3339_spelling_of_a_moment_is_accepted() {
+    let h = admin(DbMode::Up).await;
+    let utc = |text: &str| OffsetDateTime::parse(text, &Rfc3339).unwrap();
+
+    for (query, expected) in [
+        ("2026-11-12T00:00:00Z", "2026-11-12T00:00:00Z"),
+        ("2026-11-12t00:00:00z", "2026-11-12T00:00:00Z"),
+        ("2026-11-12%2000:00:00Z", "2026-11-12T00:00:00Z"),
+        ("2026-11-12T03:00:00%2B03:00", "2026-11-12T00:00:00Z"),
+        ("2026-11-11T19:00:00-05:00", "2026-11-12T00:00:00Z"),
+        ("2026-11-12T00:00:00.123456Z", "2026-11-12T00:00:00.123456Z"),
+        (
+            "2026-11-12T00:00:00.123456789Z",
+            "2026-11-12T00:00:00.123456789Z",
+        ),
+    ] {
+        let response = h.get(&format!("/admin/api/requests?from={query}")).await;
+
+        assert_eq!(
+            response.status,
+            StatusCode::OK,
+            "{query}: {}",
+            response.body
+        );
+        assert_eq!(
+            h.history.filters().last().unwrap().from,
+            Some(utc(expected)),
+            "{query}"
+        );
+    }
 }
 
 #[tokio::test]

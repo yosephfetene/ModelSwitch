@@ -3,8 +3,8 @@
 
 mod common;
 
-use chrono::{TimeDelta, Utc};
 use sqlx::PgPool;
+use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use common::CapturedLogs;
@@ -27,7 +27,9 @@ async fn create_with(pool: &PgPool, name: &str, options: CreateOptions) -> (Stri
 
 async fn list(pool: &PgPool) -> String {
     let mut out = Vec::new();
-    keys::list(pool, Utc::now(), &mut out).await.unwrap();
+    keys::list(pool, OffsetDateTime::now_utc(), &mut out)
+        .await
+        .unwrap();
     String::from_utf8(out).unwrap()
 }
 
@@ -150,12 +152,10 @@ async fn revoking_twice_keeps_the_original_time(pool: PgPool) {
     create(&pool, "laptop").await;
     let id = only_key_id(&pool).await;
     let revoked_at = || async {
-        sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
-            "SELECT revoked_at FROM client_api_keys",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap()
+        sqlx::query_scalar::<_, OffsetDateTime>("SELECT revoked_at FROM client_api_keys")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
     };
 
     revoke(&pool, id).await.unwrap();
@@ -261,8 +261,8 @@ async fn list_shows_expired_keys_as_of_the_time_given(pool: PgPool) {
         String::from_utf8(out).unwrap()
     };
 
-    let today = listing_at(Utc::now()).await;
-    let later = listing_at(Utc::now() + TimeDelta::days(31)).await;
+    let today = listing_at(OffsetDateTime::now_utc()).await;
+    let later = listing_at(OffsetDateTime::now_utc() + Duration::days(31)).await;
 
     assert!(today.lines().last().unwrap().contains("active"), "{today}");
     assert!(later.lines().last().unwrap().contains("expired"), "{later}");
@@ -398,4 +398,23 @@ async fn the_schema_rejects_impossible_budgets(pool: PgPool) {
 #[sqlx::test]
 async fn migrations_can_run_again_safely(pool: PgPool) {
     storage::MIGRATOR.run(&pool).await.unwrap();
+}
+
+#[sqlx::test]
+async fn list_shows_times_in_utc_to_the_second(pool: PgPool) {
+    create_with(&pool, "contractor", expiring_in(30)).await;
+    sqlx::query(
+        "UPDATE client_api_keys SET created_at = '2026-11-12 03:04:05.678+03', \
+                expires_at = '2026-12-12 03:04:05.999+00'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let out = list(&pool).await;
+
+    let line = out.lines().last().unwrap();
+    assert!(line.contains("2026-11-12 00:04:05  "), "{line}");
+    assert!(line.contains("2026-12-12 03:04:05  "), "{line}");
+    assert!(!line.contains(".678") && !line.contains(".999"), "{line}");
 }

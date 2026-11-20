@@ -1,8 +1,8 @@
 //! The `client_api_keys` table. Stores hashes and display prefixes only;
 //! no function here accepts or returns a plaintext key.
 
-use chrono::{DateTime, Utc};
 use sqlx::PgPool;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::auth::api_key::{ExpiryDays, KeyHash, KeyName, KeyStatus, NewApiKey};
@@ -16,17 +16,17 @@ pub struct ApiKeyRecord {
     pub id: Uuid,
     pub name: String,
     pub key_prefix: String,
-    pub created_at: DateTime<Utc>,
-    pub revoked_at: Option<DateTime<Utc>>,
+    pub created_at: OffsetDateTime,
+    pub revoked_at: Option<OffsetDateTime>,
     /// `None` means the key never expires.
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<OffsetDateTime>,
     /// USD per calendar month, exactly as stored. `None` means no budget.
     pub monthly_budget_usd: Option<String>,
 }
 
 impl ApiKeyRecord {
     /// The status as of `now`. Revocation wins, being a deliberate act.
-    pub fn status(&self, now: DateTime<Utc>) -> KeyStatus {
+    pub fn status(&self, now: OffsetDateTime) -> KeyStatus {
         if self.revoked_at.is_some() {
             KeyStatus::Revoked
         } else if self.expires_at.is_some_and(|expires_at| expires_at <= now) {
@@ -185,19 +185,19 @@ impl KeyStore for PgKeyStore {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeDelta;
+    use time::Duration;
 
     use super::*;
 
     fn record(
-        revoked_at: Option<DateTime<Utc>>,
-        expires_at: Option<DateTime<Utc>>,
+        revoked_at: Option<OffsetDateTime>,
+        expires_at: Option<OffsetDateTime>,
     ) -> ApiKeyRecord {
         ApiKeyRecord {
             id: Uuid::nil(),
             name: "k".to_owned(),
             key_prefix: "ms_dev_abcd".to_owned(),
-            created_at: DateTime::UNIX_EPOCH,
+            created_at: OffsetDateTime::UNIX_EPOCH,
             revoked_at,
             expires_at,
             monthly_budget_usd: None,
@@ -206,24 +206,24 @@ mod tests {
 
     #[test]
     fn a_key_expires_at_the_exact_moment() {
-        let at = DateTime::UNIX_EPOCH + TimeDelta::days(30);
+        let at = OffsetDateTime::UNIX_EPOCH + Duration::days(30);
         let key = record(None, Some(at));
 
-        assert_eq!(key.status(at - TimeDelta::seconds(1)), KeyStatus::Active);
+        assert_eq!(key.status(at - Duration::seconds(1)), KeyStatus::Active);
         assert_eq!(key.status(at), KeyStatus::Expired);
-        assert_eq!(key.status(at + TimeDelta::seconds(1)), KeyStatus::Expired);
+        assert_eq!(key.status(at + Duration::seconds(1)), KeyStatus::Expired);
     }
 
     #[test]
     fn no_expiry_means_active_forever() {
-        let far_future = DateTime::UNIX_EPOCH + TimeDelta::days(100_000);
+        let far_future = OffsetDateTime::UNIX_EPOCH + Duration::days(100_000);
 
         assert_eq!(record(None, None).status(far_future), KeyStatus::Active);
     }
 
     #[test]
     fn revocation_wins_over_expiry() {
-        let at = DateTime::UNIX_EPOCH + TimeDelta::days(1);
+        let at = OffsetDateTime::UNIX_EPOCH + Duration::days(1);
         let key = record(Some(at), Some(at));
 
         assert_eq!(key.status(at), KeyStatus::Revoked);
