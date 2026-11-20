@@ -163,6 +163,19 @@ Prerequisites: Rust (stable) and PostgreSQL 18.
     at <http://127.0.0.1:5173/> with live reload and forwards the API to
     the running server.
 
+8.  Optional: benchmark an alias's candidates (ADR-038). This asks each
+    candidate the 40 prompts in `bench/workload-v1.jsonl` (3 times by
+    default), grades every answer against its answer key, and shows
+    which candidates clear the bar, fastest first. It uses real provider
+    calls and quota but never stores prompts or outputs, and never
+    touches request history or budgets. Routing does not use the results
+    yet.
+
+    ``` bash
+    cargo run -- bench run --alias default --min-interval-ms 6000
+    cargo run -- bench report --alias default --min-success-percent 90
+    ```
+
 ### With Docker (alternative)
 
 ``` bash

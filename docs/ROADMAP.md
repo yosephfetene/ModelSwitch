@@ -93,6 +93,11 @@ reproducible. Tag `v0.2.0`.
 -   Policy decisions based on measured constraints
 -   Safe static-policy fallback
 
+Built in two slices (ADR-038): first `modelswitch bench`, a versioned
+workload (`bench/workload-v1.jsonl`) graded by answer keys, and
+eligibility reports; then live latency ordering among eligible
+candidates, with the configured order as fallback.
+
 **Exit:** publish evidence of where adaptive routing helps and where it
 does not.
 

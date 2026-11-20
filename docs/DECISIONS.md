@@ -929,3 +929,64 @@ for every new Rust advisory. An ignored ID must be removed when its
 reason no longer holds. A tool-only npm advisory is visible in the job
 log but needs someone to read it; such advisories are reviewed at each
 release.
+
+## ADR-038 --- Benchmarks decide eligibility; live latency will order
+
+**Status:** Accepted. Slice 1 (benchmarks and eligibility) is built;
+live ordering (slice 2) is not, so routing is unchanged.
+
+**Context:** Stage 5 adds benchmark-informed routing (ADR-002). It needs
+a definition of "better", a way to grade answers, a repeatable workload,
+a way for measurements to change routing, and a way to measure that does
+not disturb live data. The gateway never stores prompts or outputs
+(ADR-005), so live traffic can show speed and failures but never
+quality.
+
+**Decision:**
+
+-   *Objective:* the fastest candidate among those that clear a bar: a
+    least success rate and, optionally, a ceiling on mean cost per
+    answered call. One line explains every choice ("fastest of 2
+    eligible"); a weighted score would not.
+-   *Grading:* answer keys only: an exact answer (optionally ignoring
+    case), a number, or a JSON object with given fields. Deterministic
+    and free; forgiving only of surrounding whitespace, a trailing full
+    stop, and a Markdown code fence. No model grades another. This
+    measures checkable tasks, not open-ended writing, and results must
+    say so.
+-   *Workload:* `bench/workload-v1.jsonl`, 40 prompts written for this
+    project (Apache-2.0): 10 each of JSON extraction, classification,
+    short arithmetic, and exact formatting. Workloads are versioned
+    files and never edited; a run stores the file's name and SHA-256.
+-   *Measuring:* `modelswitch bench run --alias <name>` runs in process,
+    through the same adapters and per-provider deadlines, with each
+    candidate pinned and called exactly once per sample: no retries, no
+    fallback. Candidates are interleaved item by item, each item asked
+    `--repeats` times (default 3), with an optional least interval
+    between calls for free-tier limits. The whole run is bounded too.
+    Results go to `bench_runs` and `bench_samples`, never to request
+    records, so benchmark calls never count toward live latency,
+    history, or budgets. A run is stored in one transaction, complete or
+    not at all, and samples are priced exactly from reported usage and
+    the price in effect when the run is stored (ADR-034).
+-   *Eligibility:* `modelswitch bench report --alias <name>` reads the
+    latest run. A candidate is eligible with at least 30 samples, a
+    success rate (answered and passed) at or above the bar (default
+    90%), and, if `--max-mean-cost` is given, a known mean cost within
+    it; a partly unpriced mean counts as unknown, as under budgets
+    (ADR-035). Eligible candidates rank by median latency of answered
+    calls, then the 95th percentile; the rest keep the configured
+    order. Rates round down when shown.
+-   *Routing (slice 2):* among eligible candidates, recent live latency
+    from request records orders the alias, needing a least sample count
+    within a time window, and falling back to the configured order when
+    data is missing or stale. Thresholds then move into alias
+    configuration, and `routing_reason` is stored.
+
+**Consequences:** Results are reproducible and publishable, and quality
+never depends on live data the gateway refuses to keep. Benchmark calls
+spend provider quota and, where priced, money. About 40 prompts with 3
+repeats give 120 samples per candidate: enough to separate success
+rates roughly 5 points apart; closer results call for a larger
+workload rather than a confident claim. The workload must run from the
+repository (`bench/` is not in the Docker image).

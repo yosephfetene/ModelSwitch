@@ -1,4 +1,5 @@
 pub mod api_keys;
+pub mod bench;
 pub mod budgets;
 pub mod history;
 pub mod pricing;

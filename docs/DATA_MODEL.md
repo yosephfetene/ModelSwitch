@@ -117,6 +117,21 @@ Implemented in `migrations/` (Stage 3):
 Pricing changes over time. `modelswitch pricing set` closes the old row
 and adds a new one, so old estimates remain explainable (ADR-034).
 
+## `bench_runs` and `bench_samples`
+
+Implemented in `migrations/` (Stage 5, ADR-038):
+
+-   `bench_runs`: `id`, `alias`, `workload_name`, `workload_sha256`,
+    `repeats`, `created_at`
+-   `bench_samples`: one row per benchmark call --- the item ID, repeat,
+    provider and model, status, whether the answer passed its check,
+    error kind/code/status, latency, reported tokens, and the estimated
+    cost with the price version behind it
+
+Separate from request records, so benchmarks never affect live
+latency, history, or budgets. Like request records, no prompt or
+output is stored.
+
 ## Index candidates
 
 -   `request_records(created_at)`

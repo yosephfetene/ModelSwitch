@@ -42,6 +42,14 @@ API to agree with what each client was told, how many calls the
 providers received, the stored rows and attempt chains, and costs
 worked out by hand, across pages and filters.
 
+Benchmarks (ADR-038) are tested without the network: answer checks and
+eligibility as unit tests, the runner against fake providers
+(`tests/bench.rs`: pinning, one call per sample, deadlines, pacing, no
+prompt or output in logs, and that every answer key in the shipped
+workload can be met), and storage and the `bench` commands against
+PostgreSQL (`tests/bench_postgres.rs`: exact pricing, the latest run,
+percentiles, the bar and the cost ceiling).
+
 ## Failure-injection tests
 
 Simulate provider delay, 429/5xx, connection reset, malformed response,
