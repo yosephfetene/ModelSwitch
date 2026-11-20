@@ -5,12 +5,11 @@ use std::io::Write;
 use anyhow::{Context, bail};
 use sqlx::PgPool;
 
+use super::utc_to_the_second;
 use crate::domain::Target;
 use crate::pricing::{PriceSource, UsdAmount};
 use crate::routing::Catalog;
 use crate::storage::pricing;
-
-const TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 /// What `pricing set` was asked to record, as typed.
 #[derive(Debug, Clone, Copy)]
@@ -75,10 +74,12 @@ pub async fn list(pool: &PgPool, out: &mut impl Write) -> anyhow::Result<()> {
             record.id,
             record.input_usd_per_million,
             record.output_usd_per_million,
-            record.effective_from.format(TIME_FORMAT).to_string(),
-            record.effective_to.map_or("current".to_owned(), |to| {
-                to.format(TIME_FORMAT).to_string()
-            }),
+            utc_to_the_second(record.effective_from)?,
+            record
+                .effective_to
+                .map(utc_to_the_second)
+                .transpose()?
+                .unwrap_or_else(|| "current".to_owned()),
             format!("{}/{}", record.provider, record.model),
             record.source_reference
         )?;

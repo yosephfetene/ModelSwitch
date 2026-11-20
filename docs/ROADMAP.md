@@ -107,12 +107,6 @@ does not.
 **Exit:** a new operator can deploy, configure credentials securely,
 check health, and troubleshoot a simulated failure.
 
-## Maintenance
-
--   Replace `chrono` with `time` in our code and in SQLx's features,
-    then drop the RUSTSEC-2026-0543 ignore from `deny.toml` (ADR-037).
-    Next slice after `v0.3.0`.
-
 ## Scope rule
 
 Do not build dashboard, adaptive routing, streaming, and a complex admin

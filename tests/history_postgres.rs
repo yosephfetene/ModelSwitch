@@ -7,6 +7,8 @@ use std::collections::HashSet;
 
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 use modelswitch::accounting::{
@@ -270,7 +272,7 @@ async fn filters_by_provider_status_and_time(pool: PgPool) {
     let gemini = insert_at(&pool, key, "gemini", "timed_out", "2026-11-12T10:30:00Z").await;
     let end = insert_at(&pool, key, "groq", "succeeded", "2026-11-12T11:00:00Z").await;
     let store = PgHistoryStore::new(pool);
-    let at = |text: &str| Some(text.parse().unwrap());
+    let at = |text: &str| Some(OffsetDateTime::parse(text, &Rfc3339).unwrap());
 
     let by_provider = list(
         &store,
@@ -434,7 +436,7 @@ async fn times_are_utc_whatever_the_session_time_zone(pool: PgPool) {
     let page = list(
         &store,
         HistoryFilter {
-            from: Some("2026-11-12T00:00:00Z".parse().unwrap()),
+            from: Some(OffsetDateTime::parse("2026-11-12T00:00:00Z", &Rfc3339).unwrap()),
             ..HistoryFilter::default()
         },
     )

@@ -7,16 +7,15 @@
 use std::io::Write;
 
 use anyhow::{Context, bail};
-use chrono::{DateTime, Utc};
 use secrecy::ExposeSecret;
 use sqlx::PgPool;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
+use super::utc_to_the_second;
 use crate::auth::api_key::{ExpiryDays, KeyEnvironment, KeyName, NewApiKey};
 use crate::pricing::UsdAmount;
 use crate::storage::api_keys::{self, RevokeOutcome};
-
-const TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 /// How `keys create` makes a key. By default: a dev key that never expires.
 #[derive(Debug, Clone, Copy, Default)]
@@ -46,7 +45,7 @@ pub async fn create(
         record.name, record.id, record.key_prefix
     )?;
     if let Some(expires_at) = record.expires_at {
-        writeln!(out, "It expires {} UTC.", expires_at.format(TIME_FORMAT))?;
+        writeln!(out, "It expires {} UTC.", utc_to_the_second(expires_at)?)?;
     }
     writeln!(out, "Copy it now; it will not be shown again:")?;
     writeln!(out)?;
@@ -55,7 +54,7 @@ pub async fn create(
 }
 
 /// Lists every key, with its status as of `now`.
-pub async fn list(pool: &PgPool, now: DateTime<Utc>, out: &mut impl Write) -> anyhow::Result<()> {
+pub async fn list(pool: &PgPool, now: OffsetDateTime, out: &mut impl Write) -> anyhow::Result<()> {
     let records = api_keys::list(pool).await.context("failed to list keys")?;
     if records.is_empty() {
         writeln!(
@@ -77,10 +76,12 @@ pub async fn list(pool: &PgPool, now: DateTime<Utc>, out: &mut impl Write) -> an
             record.id,
             record.key_prefix,
             record.status(now),
-            record.created_at.format(TIME_FORMAT).to_string(),
-            record.expires_at.map_or("never".to_owned(), |expires_at| {
-                expires_at.format(TIME_FORMAT).to_string()
-            }),
+            utc_to_the_second(record.created_at)?,
+            record
+                .expires_at
+                .map(utc_to_the_second)
+                .transpose()?
+                .unwrap_or_else(|| "never".to_owned()),
             record.monthly_budget_usd.as_deref().unwrap_or("none"),
             record.name
         )?;

@@ -904,7 +904,8 @@ carry `Cache-Control: no-store`.
 
 ## ADR-037 --- Advisories with no fix: ignore by ID, block on what ships
 
-**Status:** Accepted.
+**Status:** Accepted. The `chrono` ignore was removed once `time`
+replaced it; `deny.toml` ignores nothing.
 
 **Context:** CI fails on any dependency advisory (`cargo deny check`,
 `npm audit`). Two arrived with no fixed version: RUSTSEC-2026-0543

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use chrono::Utc;
 use clap::{Parser, Subcommand};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use modelswitch::api::admin::AdminState;
@@ -174,7 +174,7 @@ async fn keys(config: Config, command: KeysCommand) -> anyhow::Result<()> {
             };
             cli::keys::create(&pool, &name, options, &mut out).await
         }
-        KeysCommand::List => cli::keys::list(&pool, Utc::now(), &mut out).await,
+        KeysCommand::List => cli::keys::list(&pool, OffsetDateTime::now_utc(), &mut out).await,
         KeysCommand::Budget {
             id, monthly_usd, ..
         } => cli::keys::set_budget(&pool, id, monthly_usd.as_deref(), &mut out).await,

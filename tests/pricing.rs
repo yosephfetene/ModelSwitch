@@ -524,3 +524,22 @@ async fn no_usage_is_not_a_missing_price(pool: PgPool) {
     assert_eq!(cost, None);
     assert_eq!(unpriced(&page), "unpriced_requests_total 0");
 }
+
+#[sqlx::test]
+async fn list_shows_times_in_utc_to_the_second(pool: PgPool) {
+    set(&pool, "0.10", "0.50").await;
+    sqlx::query(
+        "UPDATE pricing_versions SET effective_from = '2026-11-12 03:04:05.678+03', \
+                effective_to = '2026-12-12 03:04:05.999+00'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let out = list(&pool).await;
+
+    let line = out.lines().last().unwrap();
+    assert!(line.contains("2026-11-12 00:04:05  "), "{line}");
+    assert!(line.contains("2026-12-12 03:04:05  "), "{line}");
+    assert!(!line.contains(".678") && !line.contains(".999"), "{line}");
+}
