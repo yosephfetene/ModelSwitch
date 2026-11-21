@@ -362,6 +362,7 @@ async fn a_request_shows_its_attempts_and_price() {
     let h = admin(DbMode::Up).await;
     let id = request_id();
     h.history.add_detail(RequestDetail {
+        routing_reason: Some("p/a first: fastest of 1 eligible by benchmark p50 50 ms".to_owned()),
         summary: summary(&id),
         attempts: vec![
             AttemptView {
@@ -437,6 +438,10 @@ async fn a_request_shows_its_attempts_and_price() {
             "output_usd_per_million": "2.5",
             "source": "https://example.com/pricing"
         })
+    );
+    assert_eq!(
+        body["routing_reason"],
+        "p/a first: fastest of 1 eligible by benchmark p50 50 ms"
     );
 }
 

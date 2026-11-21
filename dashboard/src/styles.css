@@ -313,6 +313,11 @@ tbody tr:last-child td {
   margin: 0.75rem 0 0;
 }
 
+.adaptive-reason {
+  margin: 0 0 0.4rem;
+  overflow-wrap: anywhere;
+}
+
 .reason {
   margin: 0;
   padding-left: 1.25rem;

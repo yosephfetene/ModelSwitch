@@ -216,6 +216,7 @@ mod tests {
             latency_ms: 1,
             usage: Usage::unavailable(),
             attempts,
+            routing_reason: None,
         }
     }
 

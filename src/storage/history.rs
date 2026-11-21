@@ -24,6 +24,7 @@ const SUMMARY_COLUMNS: &str = "\
     r.error_kind, r.error_code, r.provider_status, r.latency_ms, \
     r.reported_input_tokens, r.reported_output_tokens, r.reported_total_tokens, \
     r.usage_source, trim_scale(r.estimated_cost)::text AS estimated_cost, r.pricing_version, \
+    r.routing_reason, \
     (SELECT count(*) FROM request_attempts a WHERE a.request_id = r.id) AS attempt_count";
 
 #[derive(sqlx::FromRow)]
@@ -48,6 +49,7 @@ struct SummaryRow {
     usage_source: String,
     estimated_cost: Option<String>,
     pricing_version: Option<Uuid>,
+    routing_reason: Option<String>,
     attempt_count: i64,
 }
 
@@ -166,6 +168,7 @@ impl PgHistoryStore {
         .fetch_all(&self.pool)
         .await?;
 
+        let routing_reason = summary.routing_reason.clone();
         let price: Option<(String, String, String)> = match summary.pricing_version {
             Some(version) => {
                 sqlx::query_as(
@@ -181,6 +184,7 @@ impl PgHistoryStore {
         };
 
         Ok(Some(RequestDetail {
+            routing_reason,
             summary: summary.into(),
             attempts: attempts
                 .into_iter()

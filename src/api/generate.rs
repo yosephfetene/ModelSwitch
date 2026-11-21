@@ -116,12 +116,22 @@ async fn generate(
         Err(error) => return error.into_response(),
     };
 
-    let targets = match state.catalog.resolve(&body.model, body.routing.fallback) {
-        Ok(targets) => targets,
-        Err(_) => {
-            tracing::info!("generate: unknown model");
-            return ApiError::UnknownModel.into_response();
+    // An adaptive alias is ordered from routing data already in memory;
+    // everything else resolves as configured (ADR-039).
+    let (targets, routing_reason) = match state.adaptive.route(&body.model) {
+        Some(mut decision) => {
+            if !body.routing.fallback {
+                decision.targets.truncate(1);
+            }
+            (decision.targets, Some(decision.reason))
         }
+        None => match state.catalog.resolve(&body.model, body.routing.fallback) {
+            Ok(targets) => (targets, None),
+            Err(_) => {
+                tracing::info!("generate: unknown model");
+                return ApiError::UnknownModel.into_response();
+            }
+        },
     };
     // Configuration guarantees every candidate has a provider, so a gap
     // is a wiring bug, not something to retry around.
@@ -173,6 +183,7 @@ async fn generate(
         latency_ms,
         usage: Usage::unavailable(),
         attempts: attempt_records(&attempts),
+        routing_reason,
     };
     let reply = match generation {
         Some(Generation { output, usage }) => {

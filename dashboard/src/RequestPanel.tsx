@@ -100,6 +100,12 @@ function Detail({ detail }: { detail: RequestDetail }) {
 
       <section aria-labelledby="reason-heading">
         <h3 id="reason-heading">Routing</h3>
+        {detail.routing_reason && (
+          <p className="adaptive-reason">
+            <span className="muted">Order chosen: </span>
+            {detail.routing_reason}
+          </p>
+        )}
         <ol className="reason" aria-label="Routing reason">
           {steps.map((step, index) => (
             <li key={index}>{step}</li>

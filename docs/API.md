@@ -219,8 +219,9 @@ cookie, not an API key.
     skip a request. Unknown or malformed parameters are
     `400 invalid_request`.
 -   `GET /admin/api/requests/{id}` returns one request with its
-    `attempts` in order and the `price` its cost used, or
-    `404 request_not_found`.
+    `attempts` in order, the `price` its cost used, and its
+    `routing_reason` (a string for adaptive aliases, otherwise
+    `null`), or `404 request_not_found`.
 
 Each request shows its key by ID, name, and display prefix, never the
 key. Costs are exact decimal strings in USD, such as `"0.000035"`, or

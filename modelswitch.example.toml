@@ -100,6 +100,15 @@ models = ["echo-1"]
 [aliases.default]
 candidates = ["echo/echo-1"]
 
+# Optional (ADR-039): order an alias by its latest benchmark
+# (`modelswitch bench run --alias <name>`) and live latency instead of
+# the listed order. Without a benchmark, the listed order is used.
+# [aliases.default.adaptive]
+# min_success_percent = 90      # the benchmark bar, also applied live
+# max_mean_cost_usd = "0.0001"  # optional ceiling per answered call
+# window_seconds = 900          # how far back live attempts count
+# min_live_requests = 10        # fewest live requests to trust
+
 [log]
 # "pretty" for local development, "json" for CI and production.
 # The level comes from the RUST_LOG environment variable (default: info).

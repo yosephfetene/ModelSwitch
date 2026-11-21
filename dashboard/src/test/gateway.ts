@@ -93,6 +93,7 @@ export function detail(overrides: Partial<RequestDetail> = {}): RequestDetail {
       output_usd_per_million: "0.08",
       source: "https://groq.com/pricing",
     },
+    routing_reason: null,
     ...overrides,
   };
 }

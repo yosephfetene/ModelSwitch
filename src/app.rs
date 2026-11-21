@@ -19,6 +19,7 @@ use crate::providers::Registry;
 use crate::rate_limit::RateLimiter;
 use crate::reliability::Limits;
 use crate::routing::Catalog;
+use crate::routing::adaptive::AdaptiveRouter;
 use crate::storage::DatabaseCheck;
 use crate::storage::api_keys::KeyStore;
 
@@ -56,6 +57,9 @@ pub struct AppState {
     pub catalog: Arc<Catalog>,
     /// Configured providers, ready to call.
     pub providers: Arc<Registry>,
+    /// Adaptive aliases and their routing data (ADR-039). Empty means
+    /// every alias keeps its configured order.
+    pub adaptive: Arc<AdaptiveRouter>,
 }
 
 /// Builds the complete HTTP application.

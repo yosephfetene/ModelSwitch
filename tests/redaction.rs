@@ -39,6 +39,7 @@ async fn store_errors(pool: PgPool) -> Vec<String> {
         latency_ms: 0,
         usage: Usage::unavailable(),
         attempts: Vec::new(),
+        routing_reason: None,
     };
     let targets = [Target::parse("p/m").unwrap()];
     let check = PgDatabaseCheck::new(pool.clone());

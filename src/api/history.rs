@@ -239,6 +239,10 @@ fn detail_json(detail: &RequestDetail) -> Value {
             })
         })
         .collect();
+    value["routing_reason"] = detail
+        .routing_reason
+        .as_deref()
+        .map_or(Value::Null, Value::from);
     value["price"] = detail.price.as_ref().map_or(Value::Null, |price| {
         json!({
             "input_usd_per_million": price.input_usd_per_million,

@@ -47,6 +47,8 @@ export interface RequestDetail extends RequestSummary {
   attempts: Attempt[];
   /** The price the cost used, in USD per million tokens. */
   price: { input_usd_per_million: string; output_usd_per_million: string; source: string } | null;
+  /** Why an adaptive alias chose its order (ADR-039); null for pins and configured order. */
+  routing_reason: string | null;
 }
 
 /** The shape of a gateway request ID; anything else is never looked up. */

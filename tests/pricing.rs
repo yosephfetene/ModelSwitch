@@ -119,6 +119,7 @@ fn record(key_id: Uuid, usage: Usage) -> RequestRecord {
         latency_ms: 0,
         usage,
         attempts: Vec::new(),
+        routing_reason: None,
     }
 }
 
@@ -468,6 +469,7 @@ async fn generate(pool: &PgPool, usage: Usage) -> (StatusCode, Option<String>, S
                 timeout: Duration::from_secs(5),
             },
         )])),
+        adaptive: Default::default(),
     };
     let response = common::send(
         &build_router(state),

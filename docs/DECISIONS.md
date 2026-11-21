@@ -933,7 +933,7 @@ release.
 ## ADR-038 --- Benchmarks decide eligibility; live latency will order
 
 **Status:** Accepted. Slice 1 (benchmarks and eligibility) is built;
-live ordering (slice 2) is not, so routing is unchanged.
+slice 2 (live ordering) is ADR-039.
 
 **Context:** Stage 5 adds benchmark-informed routing (ADR-002). It needs
 a definition of "better", a way to grade answers, a repeatable workload,
@@ -990,3 +990,56 @@ repeats give 120 samples per candidate: enough to separate success
 rates roughly 5 points apart; closer results call for a larger
 workload rather than a confident claim. The workload must run from the
 repository (`bench/` is not in the Docker image).
+
+## ADR-039 --- Adaptive aliases: benchmark eligibility, live latency, configured fallback
+
+**Status:** Accepted.
+
+**Context:** ADR-038 decided that benchmarks decide eligibility and live
+latency orders the eligible, and built the benchmarks. This is the
+routing half. It must not add a database read to every request, must
+keep failover able to reach every candidate, must fall back to the
+configured order safely, and must explain each decision.
+
+**Decision:**
+
+-   *Opt in per alias:* an alias is adaptive only with an
+    `[aliases.<name>.adaptive]` section: `min_success_percent` (default
+    90), optional `max_mean_cost_usd`, `window_seconds` (default 900,
+    60--86400), and `min_live_requests` (default 10). Other aliases and
+    pins are unchanged.
+-   *Data off the request path:* a background task reloads each
+    adaptive alias every 30 seconds, under the accounting deadline: the
+    latest benchmark (with the ceiling applied) and live attempt
+    statistics for its candidates within the window, from any request.
+    Requests read only memory. A failed load keeps the previous data;
+    data older than 120 seconds is not used.
+-   *Ordering:* a candidate is eligible if the benchmark says so and it
+    is not failing live (at least `min_live_requests` attempts in the
+    window with a success rate under the bar). Eligible candidates go
+    first, by live median latency when at least `min_live_requests`
+    attempts succeeded in the window, otherwise by benchmark median; ties
+    keep the configured order. The rest follow in configured order, so
+    failover still reaches every candidate and the executor's bounds
+    (ADR-028) are unchanged. `routing.fallback = false` takes only the
+    first.
+-   *Fallback:* with no current data, no benchmark, or no eligible
+    candidate, the configured order is used.
+-   *Explanation:* each adaptive decision has a one-line reason (at most
+    256 characters), stored as `request_records.routing_reason`, returned
+    by the history API, and shown in the dashboard panel, such as
+    "groq/x first: fastest of 2 eligible by live p50 230 ms over 41
+    requests; not eligible: gemini/y (below success bar)". Pins and
+    configured-order aliases store none: their attempts already explain
+    them (ADR-036).
+
+**Consequences:** Adaptive routing cannot slow requests or fail them: at
+worst it is the configured order. Mixing live and benchmark medians is
+deliberate: only the first choice gets live traffic, so a slowed-down
+first choice is compared against the others' benchmarks, loses its
+place, and the next candidate starts collecting live data. It can
+oscillate between two candidates of similar speed; ties keep the
+configured order, and the window smooths single slow requests.
+Several gateway instances each decide from the same database, so they
+agree within one refresh. Live success rates count all attempts,
+including retried transient failures.

@@ -41,6 +41,7 @@ async fn ready_returns_ok_when_database_reachable(pool: PgPool) {
         concurrency: Arc::new(ConcurrencyLimiter::new(10)),
         catalog: Default::default(),
         providers: Default::default(),
+        adaptive: Default::default(),
     });
 
     let response = app

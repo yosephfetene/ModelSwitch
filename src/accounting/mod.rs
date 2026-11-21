@@ -167,6 +167,8 @@ pub struct RequestRecord {
     pub usage: Usage,
     /// Every provider call made for this request, in order (ADR-003).
     pub attempts: Vec<AttemptRecord>,
+    /// Why an adaptive alias chose this order (ADR-039); `None` otherwise.
+    pub routing_reason: Option<String>,
 }
 
 impl RequestRecord {
