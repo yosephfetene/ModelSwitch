@@ -74,6 +74,7 @@ async fn generate_writes_a_row(pool: PgPool) {
                 timeout: Duration::from_secs(5),
             },
         )])),
+        adaptive: Default::default(),
     };
 
     let response = send(
@@ -152,6 +153,7 @@ fn record(key_id: Uuid) -> RequestRecord {
             total_tokens: Some(u32::MAX),
         },
         attempts: Vec::new(),
+        routing_reason: None,
     }
 }
 

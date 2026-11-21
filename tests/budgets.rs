@@ -307,6 +307,7 @@ async fn spend(pool: &PgPool, key_id: Uuid, tokens: u32) -> String {
         latency_ms: 0,
         usage: usage(tokens, 0),
         attempts: Vec::new(),
+        routing_reason: None,
     };
     PgRecordStore::new(pool.clone())
         .insert(&record)
@@ -563,6 +564,7 @@ fn real_state(pool: &PgPool, provider: &FakeProvider) -> AppState {
         concurrency: common::generous_concurrency(),
         catalog: Arc::new(catalog()),
         providers: Arc::new(providers(provider)),
+        adaptive: Default::default(),
     }
 }
 

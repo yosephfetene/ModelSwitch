@@ -38,6 +38,7 @@ fn app(pool: &PgPool) -> Router {
         concurrency: common::generous_concurrency(),
         catalog: Default::default(),
         providers: Default::default(),
+        adaptive: Default::default(),
     };
     let v1 = Router::new().route(
         "/v1/whoami",

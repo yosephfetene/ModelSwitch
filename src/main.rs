@@ -18,10 +18,12 @@ use modelswitch::domain::Target;
 use modelswitch::pricing::UsdAmount;
 use modelswitch::providers::Registry;
 use modelswitch::rate_limit::TokenBucketLimiter;
+use modelswitch::routing::adaptive::{AdaptiveRouter, REFRESH_INTERVAL};
 use modelswitch::storage::api_keys::PgKeyStore;
 use modelswitch::storage::budgets::PgBudgetStore;
 use modelswitch::storage::history::PgHistoryStore;
 use modelswitch::storage::request_records::PgRecordStore;
+use modelswitch::storage::routing::PgRoutingSource;
 use modelswitch::storage::{self, PgDatabaseCheck};
 use modelswitch::{
     AppState, build_admin_router, build_metrics_router, build_router, cli, observability,
@@ -338,6 +340,27 @@ async fn bench(config: Config, command: BenchCommand) -> anyhow::Result<()> {
 async fn serve(config: Config) -> anyhow::Result<()> {
     let pool = storage::connect_lazy(&config.database).context("invalid database configuration")?;
 
+    // Adaptive aliases reload their routing data in the background, each
+    // load under the accounting deadline; requests only read memory
+    // (ADR-039).
+    let adaptive = Arc::new(AdaptiveRouter::new(config.adaptive.iter().filter_map(
+        |(alias, policy)| {
+            let candidates = config.aliases.get(alias)?.clone();
+            Some((alias.clone(), (candidates, policy.clone())))
+        },
+    )));
+    if !adaptive.is_empty() {
+        let router = Arc::clone(&adaptive);
+        let source = PgRoutingSource::new(pool.clone());
+        let timeout = config.accounting.database_timeout;
+        tokio::spawn(async move {
+            loop {
+                router.refresh(&source, timeout).await;
+                tokio::time::sleep(REFRESH_INTERVAL).await;
+            }
+        });
+    }
+
     let state = AppState {
         db: Arc::new(PgDatabaseCheck::new(pool.clone())),
         db_check_timeout: config.health.database_timeout,
@@ -354,6 +377,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         providers: Arc::new(
             Registry::from_config(&config.providers).context("failed to set up providers")?,
         ),
+        adaptive,
     };
 
     // Bound before serving, so a port clash stops startup instead of

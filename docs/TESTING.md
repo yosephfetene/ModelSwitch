@@ -48,7 +48,12 @@ eligibility as unit tests, the runner against fake providers
 prompt or output in logs, and that every answer key in the shipped
 workload can be met), and storage and the `bench` commands against
 PostgreSQL (`tests/bench_postgres.rs`: exact pricing, the latest run,
-percentiles, the bar and the cost ceiling).
+percentiles, the bar and the cost ceiling). Adaptive routing (ADR-039)
+is tested as pure ordering rules, on the request path with a fake
+routing source (`tests/adaptive.rs`, including a simulated slowdown
+that moves traffic away and back), and against PostgreSQL for live
+statistics, the window, and the stored reason
+(`tests/adaptive_postgres.rs`).
 
 ## Failure-injection tests
 

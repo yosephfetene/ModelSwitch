@@ -16,10 +16,13 @@ use secrecy::SecretString;
 use serde::Deserialize;
 
 use crate::auth::admin::MIN_TOKEN_CHARS;
+use crate::bench::Bar;
 use crate::domain::Target;
+use crate::pricing::UsdAmount;
 use crate::rate_limit::RateLimit;
 use crate::reliability::Limits;
 use crate::routing::Catalog;
+use crate::routing::adaptive::AdaptivePolicy;
 
 /// Validated configuration used by the running service.
 #[derive(Debug)]
@@ -45,6 +48,9 @@ pub struct Config {
     /// Aliases by name, each an ordered, non-empty candidate list of
     /// configured targets.
     pub aliases: BTreeMap<String, Vec<Target>>,
+    /// Aliases ordered by benchmarks and live latency (ADR-039); the
+    /// others keep their configured order.
+    pub adaptive: BTreeMap<String, AdaptivePolicy>,
 }
 
 #[derive(Debug)]
@@ -363,7 +369,38 @@ pub struct FileProvider {
 pub struct FileAlias {
     /// Ordered `provider/model` targets.
     pub candidates: Vec<String>,
+    /// Present to order the candidates adaptively (ADR-039).
+    pub adaptive: Option<FileAdaptive>,
 }
+
+/// `[aliases.<name>.adaptive]`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileAdaptive {
+    #[serde(default = "default_min_success_percent")]
+    pub min_success_percent: u8,
+    /// USD, as text so it stays exact, such as "0.0001".
+    pub max_mean_cost_usd: Option<String>,
+    #[serde(default = "default_window_seconds")]
+    pub window_seconds: u64,
+    #[serde(default = "default_min_live_requests")]
+    pub min_live_requests: u32,
+}
+
+fn default_min_success_percent() -> u8 {
+    Bar::default().min_success_percent
+}
+
+fn default_window_seconds() -> u64 {
+    900
+}
+
+fn default_min_live_requests() -> u32 {
+    10
+}
+
+const WINDOW_SECONDS_RANGE: std::ops::RangeInclusive<u64> = 60..=86_400;
+const MIN_LIVE_REQUESTS_RANGE: std::ops::RangeInclusive<u32> = 1..=10_000;
 
 fn default_provider_timeout_ms() -> u64 {
     30_000
@@ -555,6 +592,7 @@ impl Config {
 
         let providers = validate_providers(&file.providers, &env, &mut problems);
         let aliases = validate_aliases(&file.aliases, &file.providers, &mut problems);
+        let adaptive = validate_adaptive(&file.aliases, &mut problems);
 
         match url {
             Some(url) if problems.is_empty() => Ok(Self {
@@ -592,6 +630,7 @@ impl Config {
                 },
                 providers,
                 aliases,
+                adaptive,
             }),
             _ => Err(ConfigError::Invalid(Problems(problems))),
         }
@@ -935,6 +974,64 @@ fn validate_aliases(
         }
         if problems.len() == before {
             valid.insert(name.clone(), targets);
+        }
+    }
+    valid
+}
+
+/// Checks every `[aliases.<name>.adaptive]` section.
+fn validate_adaptive(
+    aliases: &BTreeMap<String, FileAlias>,
+    problems: &mut Vec<String>,
+) -> BTreeMap<String, AdaptivePolicy> {
+    let mut valid = BTreeMap::new();
+    for (name, alias) in aliases {
+        let Some(adaptive) = &alias.adaptive else {
+            continue;
+        };
+        let before = problems.len();
+        let at = |field: &str| format!("aliases.{name}.adaptive.{field}");
+        if adaptive.min_success_percent > 100 {
+            problems.push(format!(
+                "{}: must be between 0 and 100",
+                at("min_success_percent")
+            ));
+        }
+        let max_mean_cost = match adaptive.max_mean_cost_usd.as_deref().map(UsdAmount::parse) {
+            Some(Err(error)) => {
+                problems.push(format!("{}: {error}", at("max_mean_cost_usd")));
+                None
+            }
+            Some(Ok(amount)) => Some(amount),
+            None => None,
+        };
+        if !WINDOW_SECONDS_RANGE.contains(&adaptive.window_seconds) {
+            problems.push(format!(
+                "{}: must be between {} and {}",
+                at("window_seconds"),
+                WINDOW_SECONDS_RANGE.start(),
+                WINDOW_SECONDS_RANGE.end()
+            ));
+        }
+        if !MIN_LIVE_REQUESTS_RANGE.contains(&adaptive.min_live_requests) {
+            problems.push(format!(
+                "{}: must be between {} and {}",
+                at("min_live_requests"),
+                MIN_LIVE_REQUESTS_RANGE.start(),
+                MIN_LIVE_REQUESTS_RANGE.end()
+            ));
+        }
+        if problems.len() == before {
+            let policy = AdaptivePolicy {
+                bar: Bar {
+                    min_success_percent: adaptive.min_success_percent,
+                    ..Bar::default()
+                },
+                max_mean_cost,
+                window: Duration::from_secs(adaptive.window_seconds),
+                min_live_requests: adaptive.min_live_requests,
+            };
+            valid.insert(name.clone(), policy);
         }
     }
     valid
@@ -1309,6 +1406,106 @@ candidates = [\"echo/echo-1\"]
             );
         }
         assert!(error.contains("8 problems"), "{error}");
+    }
+
+    const ADAPTIVE_BASE: &str = "
+[providers.echo]
+adapter = \"echo\"
+models = [\"echo-1\", \"echo-2\"]
+
+[aliases.static]
+candidates = [\"echo/echo-1\"]
+
+[aliases.smart]
+candidates = [\"echo/echo-2\", \"echo/echo-1\"]
+";
+
+    #[test]
+    fn an_adaptive_section_is_optional_and_has_defaults() {
+        let text = format!(
+            "{VALID}{ADAPTIVE_BASE}
+[aliases.smart.adaptive]
+"
+        );
+
+        let config = Config::from_toml(&text, env_with_url).unwrap();
+
+        assert_eq!(config.adaptive.len(), 1, "only the alias that asks");
+        assert_eq!(
+            config.adaptive["smart"],
+            AdaptivePolicy {
+                bar: Bar::default(),
+                max_mean_cost: None,
+                window: Duration::from_secs(900),
+                min_live_requests: 10,
+            }
+        );
+        assert_eq!(config.aliases.len(), 2, "both aliases still resolve");
+    }
+
+    #[test]
+    fn an_adaptive_section_is_read_in_full() {
+        let text = format!(
+            "{VALID}{ADAPTIVE_BASE}
+[aliases.smart.adaptive]
+min_success_percent = 95
+max_mean_cost_usd = \"0.0001\"
+window_seconds = 300
+min_live_requests = 25
+"
+        );
+
+        let policy = &Config::from_toml(&text, env_with_url).unwrap().adaptive["smart"];
+
+        assert_eq!(policy.bar.min_success_percent, 95);
+        assert_eq!(policy.bar.min_samples, 30);
+        assert_eq!(
+            policy.max_mean_cost.as_ref().map(UsdAmount::as_str),
+            Some("0.0001")
+        );
+        assert_eq!(policy.window, Duration::from_secs(300));
+        assert_eq!(policy.min_live_requests, 25);
+    }
+
+    #[test]
+    fn adaptive_problems_are_reported_together() {
+        let text = format!(
+            "{VALID}{ADAPTIVE_BASE}
+[aliases.smart.adaptive]
+min_success_percent = 101
+max_mean_cost_usd = \"1e-4\"
+window_seconds = 59
+min_live_requests = 0
+"
+        );
+
+        let error = Config::from_toml(&text, env_with_url)
+            .unwrap_err()
+            .to_string();
+
+        for expected in [
+            "aliases.smart.adaptive.min_success_percent: must be between 0 and 100",
+            "aliases.smart.adaptive.max_mean_cost_usd: amount must be a plain decimal",
+            "aliases.smart.adaptive.window_seconds: must be between 60 and 86400",
+            "aliases.smart.adaptive.min_live_requests: must be between 1 and 10000",
+        ] {
+            assert!(
+                error.contains(expected),
+                "missing {expected:?} in:
+{error}"
+            );
+        }
+        assert!(error.contains("4 problems"), "{error}");
+        let typo = format!(
+            "{VALID}{ADAPTIVE_BASE}
+[aliases.smart.adaptive]
+window = 300
+"
+        );
+        assert!(
+            Config::from_toml(&typo, env_with_url).is_err(),
+            "unknown fields are refused"
+        );
     }
 
     fn with_provider(provider: &str) -> String {

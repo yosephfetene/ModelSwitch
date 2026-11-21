@@ -9,6 +9,8 @@
 //! Trying the next candidate after a failure is the reliability
 //! executor's job (Stage 2); this module only decides what is eligible.
 
+pub mod adaptive;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::Target;

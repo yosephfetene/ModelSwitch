@@ -85,6 +85,7 @@ fn record(key: Uuid, usage: Usage, attempts: Vec<AttemptRecord>) -> RequestRecor
         latency_ms: 0,
         usage,
         attempts,
+        routing_reason: None,
     }
 }
 

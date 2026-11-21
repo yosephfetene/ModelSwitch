@@ -55,8 +55,11 @@ that reached a provider; requests rejected before that get none.
     answered, so it runs low if failed attempts were billed (ADR-034).
 -   `pricing_version` --- the `pricing_versions` row used; set exactly
     when `estimated_cost` is
--   Later: `routing_policy_version`, `routing_reason` (with routing
-    policies)
+-   `routing_reason` --- why an adaptive alias tried its candidates in
+    that order, such as "groq/x first: fastest of 2 eligible by live p50
+    230 ms over 41 requests"; null for pins and aliases in configured
+    order (ADR-039)
+-   Later: `routing_policy_version` (with routing policies)
 
 Prompts and completions are never stored. If that is ever added, define
 opt-in, access controls, retention, and deletion behavior first.

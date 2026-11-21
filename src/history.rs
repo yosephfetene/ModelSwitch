@@ -118,6 +118,9 @@ pub struct RequestDetail {
     /// In the order they were made.
     pub attempts: Vec<AttemptView>,
     pub price: Option<PriceView>,
+    /// Why an adaptive alias chose its order (ADR-039); `None` for pins
+    /// and aliases in configured order.
+    pub routing_reason: Option<String>,
 }
 
 /// A page of requests, newest first.

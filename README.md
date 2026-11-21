@@ -11,7 +11,8 @@ per-attempt records, and metrics on an internal port. Each key can have
 an expiry and a monthly budget, and has rate and concurrency limits.
 Versioned prices give each request an estimated cost. A read-only
 operator dashboard shows request history and explains each routing
-decision; adaptive routing is a later stage (see
+decision. Aliases can be benchmarked and, optionally, ordered by the
+results and live latency (Stage 5, in progress; see
 [the roadmap](docs/ROADMAP.md)).
 
 ## Dashboard
@@ -168,13 +169,19 @@ Prerequisites: Rust (stable) and PostgreSQL 18.
     default), grades every answer against its answer key, and shows
     which candidates clear the bar, fastest first. It uses real provider
     calls and quota but never stores prompts or outputs, and never
-    touches request history or budgets. Routing does not use the results
-    yet.
+    touches request history or budgets.
 
     ``` bash
     cargo run -- bench run --alias default --min-interval-ms 6000
     cargo run -- bench report --alias default --min-success-percent 90
     ```
+
+    To let the results route requests, add `[aliases.default.adaptive]`
+    to `modelswitch.toml` (see `modelswitch.example.toml`, ADR-039).
+    The alias then tries eligible candidates first, fastest first by
+    recent live latency, and falls back to its listed order whenever
+    there is no current data. The dashboard shows why each request went
+    where it did.
 
 ### With Docker (alternative)
 

@@ -58,9 +58,10 @@ async fn insert_request(
              id, client_request_id, client_api_key_id, requested_model, \
              selected_provider, selected_model, status, error_kind, error_code, \
              provider_status, latency_ms, reported_input_tokens, \
-             reported_output_tokens, reported_total_tokens, usage_source, created_at\
+             reported_output_tokens, reported_total_tokens, usage_source, routing_reason, \
+             created_at\
          ) VALUES (\
-             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, \
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
              now() - $11::double precision * interval '1 millisecond'\
          )",
     )
@@ -79,6 +80,7 @@ async fn insert_request(
     .bind(record.usage.output_tokens.map(i64::from))
     .bind(record.usage.total_tokens.map(i64::from))
     .bind(record.usage_source())
+    .bind(record.routing_reason.as_deref())
     .execute(&mut **transaction)
     .await
     .map(|_| ())

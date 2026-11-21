@@ -154,6 +154,7 @@ async fn stack(pool: &PgPool) -> Stack {
             ("backup".to_owned(), slot(&backup)),
             ("broken".to_owned(), slot(&broken)),
         ])),
+        adaptive: Default::default(),
     };
 
     let config = AdminConfig {

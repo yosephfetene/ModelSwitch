@@ -448,6 +448,7 @@ pub fn state_with_records(
         concurrency: generous_concurrency(),
         catalog: Arc::new(Catalog::default()),
         providers: Arc::new(Registry::default()),
+        adaptive: Default::default(),
     }
 }
 

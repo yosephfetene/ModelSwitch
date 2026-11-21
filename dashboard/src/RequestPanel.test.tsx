@@ -76,6 +76,25 @@ describe("request panel", () => {
     expect(panel.getByText("order-42")).toBeInTheDocument();
   });
 
+  it("shows why an adaptive alias chose its order, and nothing when it did not", async () => {
+    const reason = "groq/openai/gpt-oss-20b first: fastest of 2 eligible by live p50 414 ms over 38 requests";
+    gateway({
+      [ID_A]: () => json(200, { ...fallback, routing_reason: reason }),
+      [ID_B]: () => json(200, detail({ id: ID_B })),
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    const panel = within(await openFirstRow(user));
+    expect(await panel.findByText(reason)).toBeInTheDocument();
+    expect(panel.getByText("Order chosen:")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Details of the request at 2026-11-12 17:00:00/ }));
+    const other = within(await screen.findByRole("complementary", { name: "Request" }));
+    await other.findByRole("list", { name: "Routing reason" });
+    expect(other.queryByText("Order chosen:")).not.toBeInTheDocument();
+  });
+
   it("puts the request in the URL so Back and links work", async () => {
     gateway({ [ID_A]: () => json(200, fallback) });
     const user = userEvent.setup();

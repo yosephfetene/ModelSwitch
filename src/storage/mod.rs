@@ -4,6 +4,7 @@ pub mod budgets;
 pub mod history;
 pub mod pricing;
 pub mod request_records;
+pub mod routing;
 
 use std::time::Duration;
 
